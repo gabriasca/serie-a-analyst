@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from src.analytics import build_comparison_summary, compare_teams
-from src.config import APP_TITLE
+from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.db import fetch_matches, list_seasons, list_teams
 from src.seed_data import bootstrap_database
 
@@ -14,6 +14,9 @@ st.set_page_config(page_title=f"{APP_TITLE} | Confronto Squadre", layout="wide")
 bootstrap_database()
 
 st.title("Confronto Squadre")
+
+if PUBLIC_DEMO_MODE:
+    st.caption(PUBLIC_DEMO_BANNER)
 
 seasons = list_seasons()
 if not seasons:

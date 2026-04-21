@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from src.config import APP_TITLE
+from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.data_import import (
     clean_match_data,
     load_csv_to_dataframe,
@@ -22,15 +22,45 @@ from src.seed_data import bootstrap_database
 st.set_page_config(page_title=f"{APP_TITLE} | Import Dati", layout="wide")
 
 bootstrap_database()
+db_status = get_database_status()
 
 st.title("Import Dati")
+
+if PUBLIC_DEMO_MODE:
+    st.caption(PUBLIC_DEMO_BANNER)
+    st.write("Questa pagina e informativa nella versione pubblica.")
+    st.subheader("Stato database")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Partite caricate", db_status["match_count"])
+    col2.metric("Squadre", db_status["team_count"])
+    col3.metric("Stagioni", len(db_status["seasons"]))
+
+    st.write(
+        f"Stagioni presenti: {', '.join(db_status['seasons']) if db_status['seasons'] else 'nessuna'}"
+    )
+
+    if db_status["sources"]:
+        st.write("Fonte dati:")
+        st.dataframe(pd.DataFrame(db_status["sources"]), use_container_width=True)
+    else:
+        st.write("Fonte dati: nessuna")
+
+    st.info(
+        "Questa versione pubblica e consultabile. "
+        "Gli aggiornamenti dati vengono fatti dall'autore aggiornando il CSV seed."
+    )
+
+    if db_status["match_count"] == 0:
+        st.warning("Il database e vuoto. La versione pubblica richiede una snapshot seed pubblicata dall'autore.")
+
+    st.stop()
+
 st.write("Gestisci il database locale, carica il dataset demo per test oppure importa un CSV reale.")
 
 page_message = st.session_state.pop("import_data_message", None)
 if page_message:
     getattr(st, page_message["level"])(page_message["text"])
-
-db_status = get_database_status()
 
 st.subheader("Gestione database")
 col1, col2, col3 = st.columns(3)

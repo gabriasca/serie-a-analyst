@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.config import APP_TITLE
+from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.db import get_database_status
 from src.seed_data import bootstrap_database
 
@@ -19,6 +19,9 @@ st.write(
     calcolare statistiche di campionato e generare previsioni semplici e spiegabili.
     """
 )
+
+if PUBLIC_DEMO_MODE:
+    st.caption(PUBLIC_DEMO_BANNER)
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Database", "Pronto" if db_status["database_ready"] else "Non inizializzato")

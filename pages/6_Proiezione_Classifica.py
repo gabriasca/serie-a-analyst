@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from src.analytics import build_standings, get_teams
-from src.config import APP_TITLE
+from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.db import fetch_matches, list_seasons
 from src.projections import expected_total_matches, infer_remaining_fixtures, run_projection_simulations
 from src.seed_data import bootstrap_database
@@ -18,6 +18,10 @@ st.write(
     "Proietta la classifica finale combinando classifica attuale, partite mancanti inferite "
     "e simulazioni Monte Carlo basate sul predictor Poisson gia presente."
 )
+
+if PUBLIC_DEMO_MODE:
+    st.caption(PUBLIC_DEMO_BANNER)
+
 st.warning("Le proiezioni sono simulazioni statistiche basate sui dati disponibili, non certezze.")
 
 seasons = list_seasons()

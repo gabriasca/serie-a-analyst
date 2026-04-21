@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from src.config import APP_TITLE
+from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.db import fetch_matches, list_seasons, list_teams
 from src.explain import build_prediction_explanation
 from src.predictor import predict_match
@@ -16,6 +16,9 @@ bootstrap_database()
 
 st.title("Predictor Partita")
 st.write("Stima statistica semplice del match usando dati della stagione selezionata.")
+
+if PUBLIC_DEMO_MODE:
+    st.caption(PUBLIC_DEMO_BANNER)
 
 seasons = list_seasons()
 if not seasons:

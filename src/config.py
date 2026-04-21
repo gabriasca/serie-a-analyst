@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
 APP_TITLE = "Serie A Analyst"
+APP_MODE = os.getenv("SERIE_A_ANALYST_MODE", "public").lower()
+PUBLIC_DEMO_MODE = APP_MODE != "local"
+PUBLIC_DEMO_BANNER = "Versione pubblica demo: dati snapshot, previsioni statistiche non certe."
+DEFAULT_FOOTBALL_DATA_SERIE_A_URL = "https://www.football-data.co.uk/mmz4281/2526/I1.csv"
+FOOTBALL_DATA_SERIE_A_URL = (
+    os.getenv("FOOTBALL_DATA_SERIE_A_URL", DEFAULT_FOOTBALL_DATA_SERIE_A_URL).strip()
+    or DEFAULT_FOOTBALL_DATA_SERIE_A_URL
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"

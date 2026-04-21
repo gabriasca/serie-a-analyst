@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from src.analytics import build_home_away_table, build_standings
-from src.config import APP_TITLE
+from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.db import fetch_matches, list_seasons
 from src.seed_data import bootstrap_database
 
@@ -13,6 +13,9 @@ st.set_page_config(page_title=f"{APP_TITLE} | Dashboard", layout="wide")
 bootstrap_database()
 
 st.title("Dashboard Serie A")
+
+if PUBLIC_DEMO_MODE:
+    st.caption(PUBLIC_DEMO_BANNER)
 
 seasons = list_seasons()
 if not seasons:
