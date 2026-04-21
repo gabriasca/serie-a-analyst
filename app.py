@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+import streamlit as st
+
+from src.config import APP_TITLE
+from src.db import get_database_status
+from src.seed_data import bootstrap_database
+
+
+st.set_page_config(page_title=APP_TITLE, layout="wide")
+
+bootstrap_database()
+db_status = get_database_status()
+
+st.title(APP_TITLE)
+st.write(
+    """
+    Una web app locale per importare dati della Serie A da CSV, salvarli in SQLite,
+    calcolare statistiche di campionato e generare previsioni semplici e spiegabili.
+    """
+)
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Database", "Pronto" if db_status["database_ready"] else "Non inizializzato")
+col2.metric("Partite caricate", db_status["match_count"])
+col3.metric("Squadre", db_status["team_count"])
+col4.metric("Stagioni", len(db_status["seasons"]))
+
+st.subheader("Stato del progetto")
+st.write(
+    f"Stagioni disponibili: "
+    f"{', '.join(db_status['seasons']) if db_status['seasons'] else 'nessuna'}"
+)
+st.write(
+    "Usa il menu laterale per importare nuovi CSV, esplorare la dashboard del campionato, "
+    "analizzare una squadra, confrontarne due o stimare una partita."
+)
+
+if db_status["match_count"] == 0:
+    st.info(
+        "Il database e vuoto. Vai alla pagina Import Dati per caricare un CSV reale "
+        "oppure il dataset demo di test."
+    )
+
+if db_status["sources"]:
+    sources_text = ", ".join(
+        f"{source['source_name']} ({source['match_count']})" for source in db_status["sources"]
+    )
+    st.write(f"Fonti dati rilevate: {sources_text}")
+else:
+    st.write("Fonti dati rilevate: nessuna")
+
+st.warning(
+    "Le previsioni mostrate nell'app sono stime statistiche basate sui dati disponibili, "
+    "non certezze."
+)
+
+st.caption(
+    "MVP locale costruito con Streamlit, Pandas e SQLite. La sezione futura "
+    '"chiedi all\'analista" potra riusare la stessa base dati e gli stessi moduli analitici.'
+)
