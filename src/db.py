@@ -169,6 +169,22 @@ def get_existing_columns(table_name: str) -> list[str]:
         return _get_existing_columns(conn, table_name)
 
 
+def _has_columns(conn: sqlite3.Connection, table_name: str, required_columns: list[str]) -> bool:
+    existing_columns = set(_get_existing_columns(conn, table_name))
+    return set(required_columns).issubset(existing_columns)
+
+
+def _default_database_status() -> dict[str, Any]:
+    return {
+        "match_count": 0,
+        "team_count": 0,
+        "season_count": 0,
+        "seasons": [],
+        "sources": [],
+        "competitions": [],
+    }
+
+
 def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_definition: str) -> bool:
     existing_columns = _get_existing_columns(conn, table_name)
     if column_name in existing_columns:
@@ -508,13 +524,28 @@ def seed_data_source(
 def list_competitions() -> list[dict[str, Any]]:
     init_db()
     with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT competition_code, competition_name, competition_type, country, provider, provider_competition_id, active
-            FROM competitions
-            ORDER BY active DESC, competition_name ASC, competition_code ASC
-            """
-        ).fetchall()
+        required_columns = [
+            "competition_code",
+            "competition_name",
+            "competition_type",
+            "country",
+            "provider",
+            "provider_competition_id",
+            "active",
+        ]
+        if not _table_exists(conn, "competitions") or not _has_columns(conn, "competitions", required_columns):
+            return []
+
+        try:
+            rows = conn.execute(
+                """
+                SELECT competition_code, competition_name, competition_type, country, provider, provider_competition_id, active
+                FROM competitions
+                ORDER BY active DESC, competition_name ASC, competition_code ASC
+                """
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
 
     return [
         {
@@ -533,27 +564,39 @@ def list_competitions() -> list[dict[str, Any]]:
 def get_competition_summary() -> list[dict[str, Any]]:
     init_db()
     with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                COALESCE(competition_code, ?) AS competition_code,
-                COALESCE(competition_name, ?) AS competition_name,
-                COALESCE(competition_type, ?) AS competition_type,
-                COUNT(*) AS match_count,
-                COUNT(DISTINCT season) AS season_count
-            FROM matches
-            GROUP BY COALESCE(competition_code, ?), COALESCE(competition_name, ?), COALESCE(competition_type, ?)
-            ORDER BY match_count DESC, competition_name ASC
-            """,
-            (
-                DEFAULT_COMPETITION_CODE,
-                DEFAULT_COMPETITION_NAME,
-                DEFAULT_COMPETITION_TYPE,
-                DEFAULT_COMPETITION_CODE,
-                DEFAULT_COMPETITION_NAME,
-                DEFAULT_COMPETITION_TYPE,
-            ),
-        ).fetchall()
+        required_columns = [
+            "season",
+            "competition_code",
+            "competition_name",
+            "competition_type",
+        ]
+        if not _table_exists(conn, "matches") or not _has_columns(conn, "matches", required_columns):
+            return []
+
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    COALESCE(competition_code, ?) AS competition_code,
+                    COALESCE(competition_name, ?) AS competition_name,
+                    COALESCE(competition_type, ?) AS competition_type,
+                    COUNT(*) AS match_count,
+                    COUNT(DISTINCT season) AS season_count
+                FROM matches
+                GROUP BY COALESCE(competition_code, ?), COALESCE(competition_name, ?), COALESCE(competition_type, ?)
+                ORDER BY match_count DESC, competition_name ASC
+                """,
+                (
+                    DEFAULT_COMPETITION_CODE,
+                    DEFAULT_COMPETITION_NAME,
+                    DEFAULT_COMPETITION_TYPE,
+                    DEFAULT_COMPETITION_CODE,
+                    DEFAULT_COMPETITION_NAME,
+                    DEFAULT_COMPETITION_TYPE,
+                ),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
 
     return [
         {
@@ -591,54 +634,66 @@ def delete_matches_by_season(season: str) -> int:
 
 def get_database_status() -> dict[str, Any]:
     init_db()
+    status = {
+        "database_ready": False,
+        "db_path": str(DB_PATH),
+        **_default_database_status(),
+    }
 
     with get_connection() as conn:
         database_ready = _table_exists(conn, "matches")
+        status["database_ready"] = database_ready
+        if not database_ready:
+            return status
 
-        match_count = conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
-        team_count = conn.execute(
-            """
-            SELECT COUNT(*) FROM (
-                SELECT home_team AS team FROM matches
-                UNION
-                SELECT away_team AS team FROM matches
+        match_columns = set(_get_existing_columns(conn, "matches"))
+
+        status["match_count"] = int(conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] or 0)
+
+        if {"home_team", "away_team"}.issubset(match_columns):
+            status["team_count"] = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) FROM (
+                        SELECT home_team AS team FROM matches
+                        UNION
+                        SELECT away_team AS team FROM matches
+                    )
+                    """
+                ).fetchone()[0]
+                or 0
             )
-            """
-        ).fetchone()[0]
-        seasons = [
-            row[0]
-            for row in conn.execute(
-                "SELECT DISTINCT season FROM matches ORDER BY season DESC"
-            ).fetchall()
-        ]
-        sources = [
-            {
-                "source_name": row[0],
-                "source_url": row[1],
-                "match_count": int(row[2]),
-            }
-            for row in conn.execute(
-                """
-                SELECT
-                    COALESCE(source_name, '(non specificata)') AS source_name,
-                    NULLIF(MAX(COALESCE(source_url, '')), '') AS source_url,
-                    COUNT(*) AS match_count
-                FROM matches
-                GROUP BY COALESCE(source_name, '(non specificata)')
-                ORDER BY match_count DESC, source_name ASC
-                """
-            ).fetchall()
-        ]
 
-    competitions = get_competition_summary()
-    return {
-        "database_ready": database_ready,
-        "db_path": str(DB_PATH),
-        "match_count": match_count,
-        "team_count": team_count,
-        "seasons": seasons,
-        "sources": sources,
-        "competitions": competitions,
-    }
+        if "season" in match_columns:
+            status["seasons"] = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT DISTINCT season FROM matches ORDER BY season DESC"
+                ).fetchall()
+            ]
+            status["season_count"] = len(status["seasons"])
+
+        if {"source_name", "source_url"}.issubset(match_columns):
+            status["sources"] = [
+                {
+                    "source_name": row[0],
+                    "source_url": row[1],
+                    "match_count": int(row[2]),
+                }
+                for row in conn.execute(
+                    """
+                    SELECT
+                        COALESCE(source_name, '(non specificata)') AS source_name,
+                        NULLIF(MAX(COALESCE(source_url, '')), '') AS source_url,
+                        COUNT(*) AS match_count
+                    FROM matches
+                    GROUP BY COALESCE(source_name, '(non specificata)')
+                    ORDER BY match_count DESC, source_name ASC
+                    """
+                ).fetchall()
+            ]
+
+    status["competitions"] = get_competition_summary()
+    return status
 
 

@@ -28,12 +28,12 @@ col1, col2, col3, col4 = st.columns(4)
 col1.metric("Database", "Pronto" if db_status["database_ready"] else "Non inizializzato")
 col2.metric("Partite caricate", db_status["match_count"])
 col3.metric("Squadre", db_status["team_count"])
-col4.metric("Stagioni", len(db_status["seasons"]))
+col4.metric("Stagioni", len(db_status.get("seasons", [])))
 
 st.subheader("Stato del progetto")
 st.write(
     f"Stagioni disponibili: "
-    f"{', '.join(db_status['seasons']) if db_status['seasons'] else 'nessuna'}"
+    f"{', '.join(db_status.get('seasons', [])) if db_status.get('seasons', []) else 'nessuna'}"
 )
 st.write(
     "Usa il menu laterale per importare nuovi CSV, esplorare la dashboard del campionato, "
@@ -46,14 +46,14 @@ if db_status["match_count"] == 0:
         "oppure il dataset demo di test."
     )
 
-if db_status["competitions"]:
+if db_status.get("competitions", []):
     st.write("Competizioni presenti:")
-    st.dataframe(pd.DataFrame(db_status["competitions"]), use_container_width=True)
+    st.dataframe(pd.DataFrame(db_status.get("competitions", [])), use_container_width=True)
 else:
     st.write("Competizioni presenti: nessuna")
 
-if db_status["sources"]:
-    sources_df = pd.DataFrame(db_status["sources"])
+if db_status.get("sources", []):
+    sources_df = pd.DataFrame(db_status.get("sources", []))
     st.write("Fonti dati rilevate:")
     st.dataframe(sources_df, use_container_width=True)
 else:

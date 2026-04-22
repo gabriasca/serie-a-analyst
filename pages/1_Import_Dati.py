@@ -37,21 +37,21 @@ if PUBLIC_DEMO_MODE:
     col1, col2, col3 = st.columns(3)
     col1.metric("Partite caricate", db_status["match_count"])
     col2.metric("Squadre", db_status["team_count"])
-    col3.metric("Stagioni", len(db_status["seasons"]))
+    col3.metric("Stagioni", len(db_status.get("seasons", [])))
 
     st.write(
-        f"Stagioni presenti: {', '.join(db_status['seasons']) if db_status['seasons'] else 'nessuna'}"
+        f"Stagioni presenti: {', '.join(db_status.get('seasons', [])) if db_status.get('seasons', []) else 'nessuna'}"
     )
 
-    if db_status["competitions"]:
+    if db_status.get("competitions", []):
         st.write("Competizioni presenti:")
-        st.dataframe(pd.DataFrame(db_status["competitions"]), use_container_width=True)
+        st.dataframe(pd.DataFrame(db_status.get("competitions", [])), use_container_width=True)
     else:
         st.write("Competizioni presenti: nessuna")
 
-    if db_status["sources"]:
+    if db_status.get("sources", []):
         st.write("Fonti dati:")
-        st.dataframe(pd.DataFrame(db_status["sources"]), use_container_width=True)
+        st.dataframe(pd.DataFrame(db_status.get("sources", [])), use_container_width=True)
     else:
         st.write("Fonti dati: nessuna")
 
@@ -75,21 +75,21 @@ st.subheader("Gestione database")
 col1, col2, col3 = st.columns(3)
 col1.metric("Partite totali", db_status["match_count"])
 col2.metric("Squadre", db_status["team_count"])
-col3.metric("Stagioni", len(db_status["seasons"]))
+col3.metric("Stagioni", len(db_status.get("seasons", [])))
 
 st.write(
-    f"Stagioni presenti: {', '.join(db_status['seasons']) if db_status['seasons'] else 'nessuna'}"
+    f"Stagioni presenti: {', '.join(db_status.get('seasons', [])) if db_status.get('seasons', []) else 'nessuna'}"
 )
 
-if db_status["competitions"]:
+if db_status.get("competitions", []):
     st.write("Competizioni presenti:")
-    st.dataframe(pd.DataFrame(db_status["competitions"]), use_container_width=True)
+    st.dataframe(pd.DataFrame(db_status.get("competitions", [])), use_container_width=True)
 else:
     st.write("Competizioni presenti: nessuna")
 
-if db_status["sources"]:
+if db_status.get("sources", []):
     st.write("Fonti dati presenti:")
-    st.dataframe(pd.DataFrame(db_status["sources"]), use_container_width=True)
+    st.dataframe(pd.DataFrame(db_status.get("sources", [])), use_container_width=True)
 else:
     st.write("Fonti dati presenti: nessuna")
 
@@ -133,8 +133,8 @@ if st.button("Svuota database", disabled=not confirm_delete_all):
     st.rerun()
 
 st.markdown("---")
-if db_status["seasons"]:
-    season_to_delete = st.selectbox("Seleziona stagione da eliminare", db_status["seasons"])
+if db_status.get("seasons", []):
+    season_to_delete = st.selectbox("Seleziona stagione da eliminare", db_status.get("seasons", []))
 else:
     season_to_delete = None
     st.selectbox("Seleziona stagione da eliminare", ["Nessuna stagione disponibile"], disabled=True)
@@ -145,7 +145,7 @@ confirm_delete_season = st.checkbox(
 )
 if st.button(
     "Elimina stagione selezionata",
-    disabled=not (season_to_delete and confirm_delete_season and db_status["seasons"]),
+    disabled=not (season_to_delete and confirm_delete_season and db_status.get("seasons", [])),
 ):
     deleted_count = delete_matches_by_season(season_to_delete)
     st.session_state["import_data_message"] = {
@@ -232,7 +232,7 @@ if uploaded_file is not None:
                 st.dataframe(detected_competitions, use_container_width=True)
 
             overlapping_seasons = [
-                season for season in detected_seasons if season in db_status["seasons"]
+                season for season in detected_seasons if season in db_status.get("seasons", [])
             ]
             if overlapping_seasons:
                 st.warning(
