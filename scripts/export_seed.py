@@ -1,39 +1,28 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
 import pandas as pd
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "data" / "serie_a.db"
-SEED_CSV_PATH = BASE_DIR / "data" / "raw" / "serie_a_seed.csv"
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-EXPORT_COLUMNS = [
-    "season",
-    "match_date",
-    "home_team",
-    "away_team",
-    "home_goals",
-    "away_goals",
-    "full_time_result",
-    "home_shots",
-    "away_shots",
-    "home_shots_on_target",
-    "away_shots_on_target",
-    "home_corners",
-    "away_corners",
-    "home_cards",
-    "away_cards",
-    "source_name",
-]
+from src.config import CANONICAL_COLUMNS, DB_PATH, SEED_CSV_PATH
+from src.db import init_db
+
+
+EXPORT_COLUMNS = CANONICAL_COLUMNS
 
 
 def export_seed() -> None:
     if not DB_PATH.exists():
         raise FileNotFoundError(f"Database non trovato: {DB_PATH}")
 
+    init_db()
     SEED_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(DB_PATH) as conn:
@@ -41,7 +30,7 @@ def export_seed() -> None:
             f"""
             SELECT {", ".join(EXPORT_COLUMNS)}
             FROM matches
-            ORDER BY season, match_date, home_team, away_team, id
+            ORDER BY season, competition_code, match_date, home_team, away_team, id
             """,
             conn,
         )

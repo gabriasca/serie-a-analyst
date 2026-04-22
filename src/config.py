@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 from pathlib import Path
@@ -8,6 +8,9 @@ APP_TITLE = "Serie A Analyst"
 APP_MODE = os.getenv("SERIE_A_ANALYST_MODE", "public").lower()
 PUBLIC_DEMO_MODE = APP_MODE != "local"
 PUBLIC_DEMO_BANNER = "Versione pubblica demo: dati snapshot, previsioni statistiche non certe."
+DEFAULT_COMPETITION_CODE = "ITA_SERIE_A"
+DEFAULT_COMPETITION_NAME = "Serie A"
+DEFAULT_COMPETITION_TYPE = "league"
 DEFAULT_FOOTBALL_DATA_SERIE_A_URL = "https://www.football-data.co.uk/mmz4281/2526/I1.csv"
 FOOTBALL_DATA_SERIE_A_URL = (
     os.getenv("FOOTBALL_DATA_SERIE_A_URL", DEFAULT_FOOTBALL_DATA_SERIE_A_URL).strip()
@@ -31,6 +34,13 @@ REQUIRED_BASE_COLUMNS = [
 
 CANONICAL_COLUMNS = [
     "season",
+    "competition_code",
+    "competition_name",
+    "competition_type",
+    "matchday",
+    "round",
+    "stage",
+    "external_match_id",
     "match_date",
     "home_team",
     "away_team",
@@ -46,11 +56,23 @@ CANONICAL_COLUMNS = [
     "home_cards",
     "away_cards",
     "source_name",
+    "source_url",
+    "updated_at",
+    "xg_home",
+    "xg_away",
+    "proxy_xg_home",
+    "proxy_xg_away",
+    "proxy_xg_model_version",
+    "elo_home_pre",
+    "elo_away_pre",
+    "rest_days_home",
+    "rest_days_away",
 ]
 
-NUMERIC_COLUMNS = [
+INTEGER_COLUMNS = [
     "home_goals",
     "away_goals",
+    "matchday",
     "home_shots",
     "away_shots",
     "home_shots_on_target",
@@ -61,9 +83,32 @@ NUMERIC_COLUMNS = [
     "away_cards",
 ]
 
+FLOAT_COLUMNS = [
+    "xg_home",
+    "xg_away",
+    "proxy_xg_home",
+    "proxy_xg_away",
+    "elo_home_pre",
+    "elo_away_pre",
+    "rest_days_home",
+    "rest_days_away",
+]
+
+NUMERIC_COLUMNS = INTEGER_COLUMNS + FLOAT_COLUMNS
+
 COLUMN_ALIASES = {
     "season": "season",
     "stagione": "season",
+    "competition_code": "competition_code",
+    "competition_name": "competition_name",
+    "competition_type": "competition_type",
+    "matchday": "matchday",
+    "giornata": "matchday",
+    "round": "round",
+    "stage": "stage",
+    "fase": "stage",
+    "external_match_id": "external_match_id",
+    "match_id": "external_match_id",
     "date": "match_date",
     "match_date": "match_date",
     "data": "match_date",
@@ -98,6 +143,19 @@ COLUMN_ALIASES = {
     "home_cards": "home_cards",
     "ay": "away_cards",
     "away_cards": "away_cards",
+    "source_name": "source_name",
+    "source_url": "source_url",
+    "updated_at": "updated_at",
+    "last_updated": "updated_at",
+    "xg_home": "xg_home",
+    "xg_away": "xg_away",
+    "proxy_xg_home": "proxy_xg_home",
+    "proxy_xg_away": "proxy_xg_away",
+    "proxy_xg_model_version": "proxy_xg_model_version",
+    "elo_home_pre": "elo_home_pre",
+    "elo_away_pre": "elo_away_pre",
+    "rest_days_home": "rest_days_home",
+    "rest_days_away": "rest_days_away",
 }
 
 TEAM_NAME_ALIASES = {

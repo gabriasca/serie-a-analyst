@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
-from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
+from src.config import APP_TITLE, DEFAULT_COMPETITION_CODE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.db import fetch_matches, list_seasons, list_teams
 from src.explain import build_prediction_explanation
 from src.predictor import predict_match
@@ -20,13 +20,13 @@ st.write("Stima statistica semplice del match usando dati della stagione selezio
 if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)
 
-seasons = list_seasons()
+seasons = list_seasons(competition_code=DEFAULT_COMPETITION_CODE)
 if not seasons:
-    st.warning("Nessuna stagione disponibile nel database. Vai in Import Dati per caricare un CSV o il dataset demo.")
+    st.warning("Nessuna stagione Serie A disponibile nel database. Vai in Import Dati per caricare un CSV o il dataset demo.")
     st.stop()
 
 selected_season = st.selectbox("Seleziona stagione", seasons)
-teams = list_teams(selected_season)
+teams = list_teams(selected_season, competition_code=DEFAULT_COMPETITION_CODE)
 
 if len(teams) < 2:
     st.warning("Servono almeno due squadre per calcolare una previsione.")
@@ -37,7 +37,12 @@ away_options = [team for team in teams if team != home_team]
 away_team = st.selectbox("Squadra trasferta", away_options, index=0)
 
 if st.button("Calcola previsione"):
-    prediction = predict_match(fetch_matches(selected_season), home_team, away_team, max_goals=6)
+    prediction = predict_match(
+        fetch_matches(selected_season, competition_code=DEFAULT_COMPETITION_CODE),
+        home_team,
+        away_team,
+        max_goals=6,
+    )
 
     if not prediction["ok"]:
         st.warning(prediction["message"])

@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import streamlit as st
 
 from src.analytics import build_standings, get_teams
-from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
+from src.config import APP_TITLE, DEFAULT_COMPETITION_CODE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.db import fetch_matches, list_seasons
 from src.projections import expected_total_matches, infer_remaining_fixtures, run_projection_simulations
 from src.seed_data import bootstrap_database
@@ -24,16 +24,16 @@ if PUBLIC_DEMO_MODE:
 
 st.warning("Le proiezioni sono simulazioni statistiche basate sui dati disponibili, non certezze.")
 
-seasons = list_seasons()
+seasons = list_seasons(competition_code=DEFAULT_COMPETITION_CODE)
 if not seasons:
-    st.warning("Nessuna stagione disponibile nel database. Vai in Import Dati per caricare un CSV o il dataset demo.")
+    st.warning("Nessuna stagione Serie A disponibile nel database. Vai in Import Dati per caricare un CSV o il dataset demo.")
     st.stop()
 
 selected_season = st.selectbox("Seleziona stagione", seasons)
-season_df = fetch_matches(selected_season)
+season_df = fetch_matches(selected_season, competition_code=DEFAULT_COMPETITION_CODE, competition_type="league")
 
 if season_df.empty:
-    st.warning("La stagione selezionata non contiene partite.")
+    st.warning("La stagione selezionata non contiene partite di Serie A.")
     st.stop()
 
 teams = get_teams(season_df)

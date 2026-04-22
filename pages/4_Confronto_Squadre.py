@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
 from src.analytics import build_comparison_summary, compare_teams
-from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
+from src.config import APP_TITLE, DEFAULT_COMPETITION_CODE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.db import fetch_matches, list_seasons, list_teams
 from src.seed_data import bootstrap_database
 
@@ -18,13 +18,13 @@ st.title("Confronto Squadre")
 if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)
 
-seasons = list_seasons()
+seasons = list_seasons(competition_code=DEFAULT_COMPETITION_CODE)
 if not seasons:
-    st.warning("Nessuna stagione disponibile nel database. Vai in Import Dati per caricare un CSV o il dataset demo.")
+    st.warning("Nessuna stagione Serie A disponibile nel database. Vai in Import Dati per caricare un CSV o il dataset demo.")
     st.stop()
 
 selected_season = st.selectbox("Seleziona stagione", seasons)
-teams = list_teams(selected_season)
+teams = list_teams(selected_season, competition_code=DEFAULT_COMPETITION_CODE)
 
 if len(teams) < 2:
     st.warning("Servono almeno due squadre per effettuare un confronto.")
@@ -34,7 +34,7 @@ team_a = st.selectbox("Squadra A", teams, index=0)
 team_b_options = [team for team in teams if team != team_a]
 team_b = st.selectbox("Squadra B", team_b_options, index=0)
 
-comparison = compare_teams(fetch_matches(selected_season), team_a, team_b)
+comparison = compare_teams(fetch_matches(selected_season, competition_code=DEFAULT_COMPETITION_CODE), team_a, team_b)
 stats_a = comparison["team_a"]
 stats_b = comparison["team_b"]
 

@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import streamlit as st
 
 from src.analytics import compute_team_stats
-from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
+from src.config import APP_TITLE, DEFAULT_COMPETITION_CODE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.db import fetch_matches, list_seasons, list_teams
 from src.seed_data import bootstrap_database
 
@@ -17,20 +17,20 @@ st.title("Analisi Squadra")
 if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)
 
-seasons = list_seasons()
+seasons = list_seasons(competition_code=DEFAULT_COMPETITION_CODE)
 if not seasons:
-    st.warning("Nessuna stagione disponibile nel database. Vai in Import Dati per caricare un CSV o il dataset demo.")
+    st.warning("Nessuna stagione Serie A disponibile nel database. Vai in Import Dati per caricare un CSV o il dataset demo.")
     st.stop()
 
 selected_season = st.selectbox("Seleziona stagione", seasons)
-teams = list_teams(selected_season)
+teams = list_teams(selected_season, competition_code=DEFAULT_COMPETITION_CODE)
 
 if not teams:
     st.warning("Nessuna squadra disponibile per la stagione selezionata.")
     st.stop()
 
 selected_team = st.selectbox("Seleziona squadra", teams)
-season_df = fetch_matches(selected_season)
+season_df = fetch_matches(selected_season, competition_code=DEFAULT_COMPETITION_CODE)
 team_stats = compute_team_stats(season_df, selected_team)
 
 if not team_stats:

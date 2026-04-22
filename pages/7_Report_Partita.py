@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
-from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
+from src.config import APP_TITLE, DEFAULT_COMPETITION_CODE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
 from src.db import fetch_matches, list_seasons, list_teams
 from src.reporting import build_match_report_data
 from src.seed_data import bootstrap_database
@@ -19,13 +19,13 @@ st.write("Genera un report pre-partita leggibile usando solo i dati disponibili 
 if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)
 
-seasons = list_seasons()
+seasons = list_seasons(competition_code=DEFAULT_COMPETITION_CODE)
 if not seasons:
-    st.warning("Nessuna stagione disponibile nel database.")
+    st.warning("Nessuna stagione Serie A disponibile nel database.")
     st.stop()
 
 selected_season = st.selectbox("Seleziona stagione", seasons)
-teams = list_teams(selected_season)
+teams = list_teams(selected_season, competition_code=DEFAULT_COMPETITION_CODE)
 
 if len(teams) < 2:
     st.warning("Servono almeno due squadre nella stagione selezionata per generare un report.")
@@ -40,7 +40,12 @@ if st.button("Genera report"):
         "season": selected_season,
         "home_team": home_team,
         "away_team": away_team,
-        "report": build_match_report_data(fetch_matches(selected_season), selected_season, home_team, away_team),
+        "report": build_match_report_data(
+            fetch_matches(selected_season, competition_code=DEFAULT_COMPETITION_CODE),
+            selected_season,
+            home_team,
+            away_team,
+        ),
     }
 
 stored_report = st.session_state.get("match_report_result")

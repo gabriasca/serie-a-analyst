@@ -1,5 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
@@ -45,11 +46,16 @@ if db_status["match_count"] == 0:
         "oppure il dataset demo di test."
     )
 
+if db_status["competitions"]:
+    st.write("Competizioni presenti:")
+    st.dataframe(pd.DataFrame(db_status["competitions"]), use_container_width=True)
+else:
+    st.write("Competizioni presenti: nessuna")
+
 if db_status["sources"]:
-    sources_text = ", ".join(
-        f"{source['source_name']} ({source['match_count']})" for source in db_status["sources"]
-    )
-    st.write(f"Fonti dati rilevate: {sources_text}")
+    sources_df = pd.DataFrame(db_status["sources"])
+    st.write("Fonti dati rilevate:")
+    st.dataframe(sources_df, use_container_width=True)
 else:
     st.write("Fonti dati rilevate: nessuna")
 

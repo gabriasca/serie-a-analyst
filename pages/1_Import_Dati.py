@@ -1,20 +1,23 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
-from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
+from src.config import (
+    APP_TITLE,
+    DEFAULT_COMPETITION_CODE,
+    DEFAULT_COMPETITION_NAME,
+    DEFAULT_COMPETITION_TYPE,
+    PUBLIC_DEMO_BANNER,
+    PUBLIC_DEMO_MODE,
+)
 from src.data_import import (
     clean_match_data,
     load_csv_to_dataframe,
     save_dataframe_to_sqlite,
     validate_required_columns,
 )
-from src.db import (
-    delete_all_matches,
-    delete_matches_by_season,
-    get_database_status,
-)
+from src.db import delete_all_matches, delete_matches_by_season, get_database_status
 from src.demo_data import load_demo_data
 from src.seed_data import bootstrap_database
 
@@ -40,11 +43,17 @@ if PUBLIC_DEMO_MODE:
         f"Stagioni presenti: {', '.join(db_status['seasons']) if db_status['seasons'] else 'nessuna'}"
     )
 
+    if db_status["competitions"]:
+        st.write("Competizioni presenti:")
+        st.dataframe(pd.DataFrame(db_status["competitions"]), use_container_width=True)
+    else:
+        st.write("Competizioni presenti: nessuna")
+
     if db_status["sources"]:
-        st.write("Fonte dati:")
+        st.write("Fonti dati:")
         st.dataframe(pd.DataFrame(db_status["sources"]), use_container_width=True)
     else:
-        st.write("Fonte dati: nessuna")
+        st.write("Fonti dati: nessuna")
 
     st.info(
         "Questa versione pubblica e consultabile. "
@@ -71,6 +80,12 @@ col3.metric("Stagioni", len(db_status["seasons"]))
 st.write(
     f"Stagioni presenti: {', '.join(db_status['seasons']) if db_status['seasons'] else 'nessuna'}"
 )
+
+if db_status["competitions"]:
+    st.write("Competizioni presenti:")
+    st.dataframe(pd.DataFrame(db_status["competitions"]), use_container_width=True)
+else:
+    st.write("Competizioni presenti: nessuna")
 
 if db_status["sources"]:
     st.write("Fonti dati presenti:")
@@ -146,11 +161,27 @@ st.markdown("---")
 st.subheader("Import CSV reale")
 st.write("Carica un CSV locale, verifica le colonne disponibili e salva le partite in SQLite.")
 
-uploaded_file = st.file_uploader("Seleziona un file CSV", type=["csv"])
 season_fallback = st.text_input(
     "Stagione da applicare se manca nel CSV",
+    value="",
     placeholder="Esempio: 2024-2025",
 )
+
+comp_col1, comp_col2, comp_col3 = st.columns(3)
+competition_code_input = comp_col1.text_input(
+    "competition_code di default",
+    value=DEFAULT_COMPETITION_CODE,
+)
+competition_name_input = comp_col2.text_input(
+    "competition_name di default",
+    value=DEFAULT_COMPETITION_NAME,
+)
+competition_type_input = comp_col3.text_input(
+    "competition_type di default",
+    value=DEFAULT_COMPETITION_TYPE,
+)
+
+uploaded_file = st.file_uploader("Seleziona un file CSV", type=["csv"])
 
 if uploaded_file is not None:
     try:
@@ -173,12 +204,21 @@ if uploaded_file is not None:
                 raw_df,
                 default_season=season_fallback,
                 source_name=uploaded_file.name,
+                default_competition_code=competition_code_input.strip() or DEFAULT_COMPETITION_CODE,
+                default_competition_name=competition_name_input.strip() or DEFAULT_COMPETITION_NAME,
+                default_competition_type=competition_type_input.strip() or DEFAULT_COMPETITION_TYPE,
             )
             st.success("Validazione completata con successo.")
             st.subheader("Anteprima dati puliti")
             st.dataframe(cleaned_df.head(10), use_container_width=True)
 
             detected_seasons = sorted(cleaned_df["season"].dropna().astype(str).unique().tolist())
+            detected_competitions = (
+                cleaned_df[["competition_code", "competition_name", "competition_type"]]
+                .drop_duplicates()
+                .reset_index(drop=True)
+            )
+
             if detected_seasons:
                 season_label = (
                     "Stagione che verra salvata"
@@ -186,6 +226,10 @@ if uploaded_file is not None:
                     else "Stagioni che verranno salvate"
                 )
                 st.info(f"{season_label}: {', '.join(detected_seasons)}")
+
+            if not detected_competitions.empty:
+                st.write("Competizione/i che verranno salvate:")
+                st.dataframe(detected_competitions, use_container_width=True)
 
             overlapping_seasons = [
                 season for season in detected_seasons if season in db_status["seasons"]
