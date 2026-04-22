@@ -80,6 +80,10 @@ MATCH_MIGRATION_COLUMNS = {
     "rest_days_away": "REAL",
 }
 
+TEAM_RATINGS_MIGRATION_COLUMNS = {
+    "source_url": "TEXT",
+}
+
 CREATE_COMPETITIONS_SQL = """
 CREATE TABLE IF NOT EXISTS competitions (
     competition_code TEXT PRIMARY KEY,
@@ -299,6 +303,8 @@ def _run_schema_migrations(conn: sqlite3.Connection) -> None:
     conn.execute(CREATE_TEAM_ALIASES_SQL)
     conn.execute(CREATE_DATA_SOURCES_SQL)
     conn.execute(CREATE_TEAM_RATINGS_SQL)
+    for column_name, column_definition in TEAM_RATINGS_MIGRATION_COLUMNS.items():
+        _ensure_column(conn, "team_ratings", column_name, column_definition)
 
     _seed_default_competitions(conn)
     _backfill_serie_a_competition_fields(conn)

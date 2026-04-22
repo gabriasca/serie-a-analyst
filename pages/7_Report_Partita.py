@@ -72,6 +72,9 @@ home_recent = report["recent_form"]["home"]
 away_recent = report["recent_form"]["away"]
 prediction = report["prediction"]
 table_context = report["table_context"]
+ratings = report.get("ratings", {})
+home_rating = ratings.get("home")
+away_rating = ratings.get("away")
 
 st.header(report["match_title"])
 
@@ -81,6 +84,20 @@ state_col1.metric("Stagione usata", report["season"])
 state_col2.metric("Partite disponibili", report["match_count"])
 state_col3.metric("Squadre in stagione", report["team_count"])
 st.info("Analisi statistica basata sui dati disponibili, non una certezza.")
+
+st.subheader("Rating Elo")
+rating_col1, rating_col2 = st.columns(2)
+with rating_col1:
+    st.metric(
+        f"Elo {report['home_team']}",
+        f"{home_rating['rating_value']:.0f}" if home_rating else "n/d",
+    )
+with rating_col2:
+    st.metric(
+        f"Elo {report['away_team']}",
+        f"{away_rating['rating_value']:.0f}" if away_rating else "n/d",
+    )
+st.caption(ratings.get("note", "Il rating e usato come indicatore di forza storica/recente, non come certezza."))
 
 st.subheader("Forma recente")
 left_form, right_form = st.columns(2)

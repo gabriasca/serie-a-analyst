@@ -12,9 +12,14 @@ DEFAULT_COMPETITION_CODE = "ITA_SERIE_A"
 DEFAULT_COMPETITION_NAME = "Serie A"
 DEFAULT_COMPETITION_TYPE = "league"
 DEFAULT_FOOTBALL_DATA_SERIE_A_URL = "https://www.football-data.co.uk/mmz4281/2526/I1.csv"
+DEFAULT_CLUBELO_RATINGS_URL = "https://clubelo.com/ITA"
 FOOTBALL_DATA_SERIE_A_URL = (
     os.getenv("FOOTBALL_DATA_SERIE_A_URL", DEFAULT_FOOTBALL_DATA_SERIE_A_URL).strip()
     or DEFAULT_FOOTBALL_DATA_SERIE_A_URL
+)
+CLUBELO_RATINGS_URL = (
+    os.getenv("CLUBELO_RATINGS_URL", DEFAULT_CLUBELO_RATINGS_URL).strip()
+    or DEFAULT_CLUBELO_RATINGS_URL
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,6 +28,7 @@ RAW_DATA_DIR = DATA_DIR / "raw"
 DB_PATH = DATA_DIR / "serie_a.db"
 DEMO_CSV_PATH = RAW_DATA_DIR / "serie_a_matches.csv"
 SEED_CSV_PATH = RAW_DATA_DIR / "serie_a_seed.csv"
+TEAM_RATINGS_SEED_PATH = RAW_DATA_DIR / "team_ratings_seed.csv"
 
 REQUIRED_BASE_COLUMNS = [
     "match_date",

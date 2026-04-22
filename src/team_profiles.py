@@ -5,8 +5,12 @@ from typing import Any
 import pandas as pd
 
 from src.analytics import RESULT_LABELS, build_standings, get_teams, prepare_matches_dataframe
+from src.ratings import build_strength_bucket_map, enrich_standings_with_ratings
 
 
+TOP_BUCKET_KEY = "top"
+MIDDLE_BUCKET_KEY = "middle"
+BOTTOM_BUCKET_KEY = "bottom"
 TOP_BUCKET_LABEL = "vs top 6"
 MIDDLE_BUCKET_LABEL = "vs medio gruppo"
 BOTTOM_BUCKET_LABEL = "vs ultime 6"
@@ -173,59 +177,44 @@ def _compute_league_baselines(team_logs: dict[str, pd.DataFrame]) -> dict[str, f
     return baselines
 
 
-def _build_bucket_metadata(standings: pd.DataFrame) -> tuple[dict[str, str], dict[str, list[str]]]:
-    if standings.empty:
-        return {}, {
-            TOP_BUCKET_LABEL: [],
-            MIDDLE_BUCKET_LABEL: [],
-            BOTTOM_BUCKET_LABEL: [],
-        }
+def _bucket_display_label(bucket_key: str, bucket_source: str) -> str:
+    if bucket_source == "elo":
+        if bucket_key == TOP_BUCKET_KEY:
+            return "vs fascia alta (Elo)"
+        if bucket_key == MIDDLE_BUCKET_KEY:
+            return "vs fascia media (Elo)"
+        return "vs fascia bassa (Elo)"
 
-    standings_df = standings.reset_index().rename(columns={"Pos": "position"})
-    if "position" not in standings_df.columns:
-        standings_df = standings_df.rename(columns={standings_df.columns[0]: "position"})
+    if bucket_key == TOP_BUCKET_KEY:
+        return TOP_BUCKET_LABEL
+    if bucket_key == MIDDLE_BUCKET_KEY:
+        return MIDDLE_BUCKET_LABEL
+    return BOTTOM_BUCKET_LABEL
 
-    team_count = len(standings_df)
-    top_limit = min(6, team_count)
-    bottom_start = max(top_limit + 1, team_count - 5)
 
-    bucket_map: dict[str, str] = {}
-    bucket_teams = {
-        TOP_BUCKET_LABEL: [],
-        MIDDLE_BUCKET_LABEL: [],
-        BOTTOM_BUCKET_LABEL: [],
-    }
-
-    for row in standings_df.itertuples(index=False):
-        position = int(getattr(row, "position"))
-        team_name = getattr(row, "Team")
-        if position <= top_limit:
-            label = TOP_BUCKET_LABEL
-        elif position >= bottom_start:
-            label = BOTTOM_BUCKET_LABEL
-        else:
-            label = MIDDLE_BUCKET_LABEL
-        bucket_map[team_name] = label
-        bucket_teams[label].append(team_name)
-
-    return bucket_map, bucket_teams
+def _bucket_sentence_label(bucket_row: dict[str, Any]) -> str:
+    label = str(bucket_row.get("bucket_label", "fascia avversaria"))
+    return label[3:] if label.startswith("vs ") else label
 
 
 def _build_profile_context(df: pd.DataFrame) -> dict[str, Any]:
     prepared_df = prepare_matches_dataframe(df)
     standings = build_standings(prepared_df)
+    enriched_standings = enrich_standings_with_ratings(standings)
     teams = get_teams(prepared_df)
     team_logs = {team: _build_team_matches(prepared_df, team) for team in teams}
     baselines = _compute_league_baselines(team_logs)
-    bucket_map, bucket_teams = _build_bucket_metadata(standings)
+    bucket_map, bucket_teams, bucket_source = build_strength_bucket_map(enriched_standings)
     return {
         "prepared_df": prepared_df,
         "teams": teams,
         "standings": standings,
+        "enriched_standings": enriched_standings,
         "team_logs": team_logs,
         "baselines": baselines,
         "bucket_map": bucket_map,
         "bucket_teams": bucket_teams,
+        "bucket_source": bucket_source,
     }
 
 
@@ -435,17 +424,19 @@ def compute_vs_strength_buckets(
         return []
 
     profiled_df = team_df.copy()
-    profiled_df["bucket_label"] = profiled_df["opponent"].map(bucket_map).fillna(MIDDLE_BUCKET_LABEL)
+    bucket_source = str(context.get("bucket_source", "classifica"))
+    profiled_df["bucket_key"] = profiled_df["opponent"].map(bucket_map).fillna(MIDDLE_BUCKET_KEY)
     rows = []
-    for bucket_label in [TOP_BUCKET_LABEL, MIDDLE_BUCKET_LABEL, BOTTOM_BUCKET_LABEL]:
-        bucket_df = profiled_df[profiled_df["bucket_label"] == bucket_label]
+    for bucket_key in [TOP_BUCKET_KEY, MIDDLE_BUCKET_KEY, BOTTOM_BUCKET_KEY]:
+        bucket_df = profiled_df[profiled_df["bucket_key"] == bucket_key]
         matches = len(bucket_df)
         points = int(bucket_df["points"].sum()) if matches else 0
         goals_for = int(bucket_df["goals_for"].sum()) if matches else 0
         goals_against = int(bucket_df["goals_against"].sum()) if matches else 0
         rows.append(
             {
-                "bucket_label": bucket_label,
+                "bucket_key": bucket_key,
+                "bucket_label": _bucket_display_label(bucket_key, bucket_source),
                 "matches": int(matches),
                 "points": points,
                 "ppm": round(points / matches, 2) if matches else 0.0,
@@ -476,7 +467,7 @@ def classify_team_archetypes(profile: dict[str, Any]) -> list[str]:
     defensive = profile.get("defensive", {})
     home_away = profile.get("home_away", {})
     recent = profile.get("recent", {})
-    versus = {row["bucket_label"]: row for row in profile.get("vs_strength_buckets", [])}
+    versus = {row.get("bucket_key", row["bucket_label"]): row for row in profile.get("vs_strength_buckets", [])}
     general = profile.get("general", {})
 
     off_index = float(offensive.get("indice_pericolosita_offensiva", 100.0))
@@ -505,11 +496,11 @@ def classify_team_archetypes(profile: dict[str, Any]) -> list[str]:
         elif recent_ppm <= 0.8 and recent_gd <= -2:
             labels.append("forma recente negativa")
 
-    top_bucket = versus.get(TOP_BUCKET_LABEL)
+    top_bucket = versus.get(TOP_BUCKET_KEY)
     if top_bucket and top_bucket["matches"] >= 3 and top_bucket["ppm"] >= overall_ppm + 0.2:
         labels.append("efficace contro squadre forti")
 
-    bottom_bucket = versus.get(BOTTOM_BUCKET_LABEL)
+    bottom_bucket = versus.get(BOTTOM_BUCKET_KEY)
     if bottom_bucket and bottom_bucket["matches"] >= 3 and bottom_bucket["ppm"] >= max(2.0, overall_ppm):
         labels.append("efficace contro squadre deboli")
 
@@ -529,7 +520,7 @@ def build_strengths_and_weaknesses(profile: dict[str, Any]) -> dict[str, list[st
     recent = profile.get("recent", {})
     general = profile.get("general", {})
     indicators = profile.get("indicators", {})
-    versus = {row["bucket_label"]: row for row in profile.get("vs_strength_buckets", [])}
+    versus = {row.get("bucket_key", row["bucket_label"]): row for row in profile.get("vs_strength_buckets", [])}
 
     off_index = float(offensive.get("indice_pericolosita_offensiva", 100.0))
     def_index = float(defensive.get("indice_solidita_difensiva", 100.0))
@@ -547,7 +538,7 @@ def build_strengths_and_weaknesses(profile: dict[str, Any]) -> dict[str, list[st
         strengths.append("In casa riesce ad alzare rendimento e raccolta punti.")
     if intensity_index >= 110:
         strengths.append("Mostra intensita alta tra volume di gioco, corner e partecipazione alla gara.")
-    top_bucket = versus.get(TOP_BUCKET_LABEL)
+    top_bucket = versus.get(TOP_BUCKET_KEY)
     if top_bucket and top_bucket["matches"] >= 3 and top_bucket["ppm"] >= overall_ppm + 0.2:
         strengths.append("Sa restare competitiva anche contro avversarie di alta classifica.")
 
@@ -559,7 +550,7 @@ def build_strengths_and_weaknesses(profile: dict[str, Any]) -> dict[str, list[st
         weaknesses.append("La forma recente e sotto tono e rallenta la crescita del profilo.")
     if home_gap >= 0.55 and home_away.get("ppm_away", 0.0) < 1.0:
         weaknesses.append("Fuori casa il rendimento cala sensibilmente rispetto alle gare interne.")
-    bottom_bucket = versus.get(BOTTOM_BUCKET_LABEL)
+    bottom_bucket = versus.get(BOTTOM_BUCKET_KEY)
     if bottom_bucket and bottom_bucket["matches"] >= 3 and bottom_bucket["ppm"] < 1.5:
         weaknesses.append("Contro squadre della parte bassa non sta convertendo abbastanza il potenziale in punti.")
     if intensity_index <= 92:
@@ -585,7 +576,8 @@ def build_team_profile_summary(profile: dict[str, Any]) -> str:
     defensive = profile["defensive"]
     home_away = profile["home_away"]
     recent = profile["recent"]
-    versus = {row["bucket_label"]: row for row in profile["vs_strength_buckets"]}
+    rating = profile.get("rating", {})
+    versus = {row.get("bucket_key", row["bucket_label"]): row for row in profile["vs_strength_buckets"]}
     archetypes = ", ".join(profile["archetypes"][:4])
 
     lines = [
@@ -610,21 +602,26 @@ def build_team_profile_summary(profile: dict[str, Any]) -> str:
             f"e ha raccolto {recent['points']} punti con {recent['goals_for']} gol fatti e {recent['goals_against']} subiti."
         ),
     ]
+    if rating.get("available"):
+        lines.append(
+            f"Il rating Elo attuale e {rating['rating_value']:.0f}, con fascia forza {rating['strength_band']} "
+            f"tra le squadre coperte dal seed."
+        )
 
-    top_bucket = versus.get(TOP_BUCKET_LABEL)
-    middle_bucket = versus.get(MIDDLE_BUCKET_LABEL)
-    bottom_bucket = versus.get(BOTTOM_BUCKET_LABEL)
+    top_bucket = versus.get(TOP_BUCKET_KEY)
+    middle_bucket = versus.get(MIDDLE_BUCKET_KEY)
+    bottom_bucket = versus.get(BOTTOM_BUCKET_KEY)
     if top_bucket:
         lines.append(
-            f"Contro il top 6 sta viaggiando a {top_bucket['ppm']:.2f} punti per partita."
+            f"Contro {_bucket_sentence_label(top_bucket)} sta viaggiando a {top_bucket['ppm']:.2f} punti per partita."
         )
     if middle_bucket:
         lines.append(
-            f"Contro il medio gruppo il rendimento e di {middle_bucket['ppm']:.2f} punti per partita."
+            f"Contro {_bucket_sentence_label(middle_bucket)} il rendimento e di {middle_bucket['ppm']:.2f} punti per partita."
         )
     if bottom_bucket:
         lines.append(
-            f"Contro le ultime sei il rendimento e di {bottom_bucket['ppm']:.2f} punti per gara."
+            f"Contro {_bucket_sentence_label(bottom_bucket)} il rendimento e di {bottom_bucket['ppm']:.2f} punti per gara."
         )
 
     lines.append(f"Le etichette che descrivono meglio il profilo oggi sono: {archetypes}.")
@@ -633,7 +630,7 @@ def build_team_profile_summary(profile: dict[str, Any]) -> str:
         "con campioni ridotti o con una sequenza di partite molto sbilanciata."
     )
 
-    return "\n".join(lines[:9])
+    return "\n".join(lines[:11])
 
 
 def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
@@ -648,7 +645,7 @@ def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
             "notes": [],
         }
 
-    standings = context["standings"]
+    standings = context["enriched_standings"]
     standing_row = standings[standings["Team"] == team]
     if standing_row.empty:
         return {
@@ -681,11 +678,25 @@ def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
         "indice_intensita": _compute_intensity_index(team_df, context.get("baselines", {})),
         "indice_dipendenza_casa": home_away["indice_dipendenza_casa"],
     }
+    rating_value = _safe_float(row.get("Elo"))
+    rating_date = row.get("Rating Date")
+    if isinstance(rating_date, pd.Timestamp):
+        rating_date = rating_date.strftime("%Y-%m-%d")
+    rating = {
+        "available": rating_value is not None,
+        "rating_type": "elo",
+        "rating_value": rating_value,
+        "rating_date": rating_date,
+        "source_name": row.get("Rating Source"),
+        "strength_band": row.get("Fascia forza") if pd.notna(row.get("Fascia forza")) else None,
+        "rating_rank": int(row.get("Elo Rank")) if pd.notna(row.get("Elo Rank")) else None,
+    }
 
     profile = {
         "ok": True,
         "team": team,
         "general": general,
+        "rating": rating,
         "offensive": offensive,
         "defensive": defensive,
         "home_away": home_away,
@@ -694,6 +705,7 @@ def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
         "indicators": indicators,
         "notes": _build_notes(team_df),
         "league_bucket_teams": context.get("bucket_teams", {}),
+        "strength_bucket_source": context.get("bucket_source", "classifica"),
     }
     profile["archetypes"] = classify_team_archetypes(profile)
     strength_weakness = build_strengths_and_weaknesses(profile)

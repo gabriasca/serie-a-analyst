@@ -6,6 +6,7 @@ L'app consente di:
 
 - importare dati da CSV
 - salvare e deduplicare partite in SQLite
+- arricchire le squadre con team ratings Elo seedati da fonte pubblica
 - generare dashboard di campionato
 - analizzare una singola squadra
 - confrontare due squadre
@@ -82,13 +83,38 @@ Output principali:
 - risultato piu probabile
 - spiegazione testuale dei fattori usati
 
+## Team Ratings
+
+L'app supporta un primo layer informativo di team ratings basato su Elo.
+
+Caratteristiche:
+
+- il seed pubblico e `data/raw/team_ratings_seed.csv`
+- il tipo di rating usato in questo step e `elo`
+- la fonte pubblica di riferimento e ClubElo
+- i rating vengono salvati nella tabella SQLite `team_ratings`
+- in questo step i rating non modificano predictor o proiezioni
+
+Uso attuale nell'app:
+
+- `Profilo Squadra` mostra rating Elo attuale e fascia forza relativa
+- `Report Partita` mostra il rating Elo delle due squadre, se disponibile
+- il blocco forte/medio/debole in `Profilo Squadra` usa il ranking Elo solo quando il seed copre tutte le squadre della stagione; altrimenti torna automaticamente alla classifica corrente
+
+I rating Elo non vanno confusi con le statistiche partita:
+
+- il rating Elo riassume forza storica/recente in un numero sintetico
+- le statistiche partita descrivono cio che la squadra sta producendo nella stagione corrente
+- i due livelli sono complementari ma non equivalenti
+
 ## Limiti dell'MVP
 
 - non usa API esterne
 - non usa scraping
 - non include quote scommesse
 - il modello predittivo non e una black box, ma resta semplice
-- non gestisce ancora metriche avanzate come xG reali, Elo o infortuni
+- non gestisce ancora metriche avanzate come xG reali o infortuni
+- i rating Elo sono informativi e non guidano ancora il predictor
 
 ## Prossimi step consigliati
 
@@ -210,6 +236,29 @@ Comando PowerShell per esportare il seed:
 
 Lo script legge `data/serie_a.db` ed esporta `data/raw/serie_a_seed.csv`, che e la snapshot usata dalla versione pubblica.
 
+## Come aggiornare i team ratings pubblici
+
+La repo include uno script dedicato per aggiornare il seed Elo:
+
+- `scripts/update_clubelo_seed.py`
+- output: `data/raw/team_ratings_seed.csv`
+
+Comportamento:
+
+- legge la URL da `CLUBELO_RATINGS_URL` se presente
+- altrimenti usa la pagina Italy ufficiale di ClubElo come default
+- normalizza i nomi squadra con mapping prudente
+- salva solo il seed CSV
+- non modifica direttamente il database locale
+
+Esecuzione locale:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\update_clubelo_seed.py
+```
+
+Il bootstrap dell'app carica automaticamente i rating nel database se `data/raw/team_ratings_seed.csv` esiste.
+
 ## Aggiornamento automatico dei dati
 
 La repo include uno script e un workflow GitHub Actions per aggiornare automaticamente `data/raw/serie_a_seed.csv`.
@@ -218,6 +267,8 @@ Componenti:
 
 - `scripts/update_football_data_seed.py`
 - `.github/workflows/update-data.yml`
+- `scripts/update_clubelo_seed.py`
+- `.github/workflows/update-ratings.yml`
 
 Come funziona:
 
@@ -231,6 +282,12 @@ Il workflow parte:
 
 - manualmente con `workflow_dispatch`
 - automaticamente una volta al giorno
+
+Per i team ratings il workflow dedicato:
+
+- aggiorna `data/raw/team_ratings_seed.csv`
+- crea commit solo se il file cambia
+- esegue `fetch` e `pull --rebase` prima del push per ridurre errori `fetch first`
 
 ## Come lanciarlo manualmente da GitHub Actions
 
@@ -246,6 +303,7 @@ Il workflow parte:
 L'app e lo script supportano la variabile ambiente opzionale:
 
 - `FOOTBALL_DATA_SERIE_A_URL`
+- `CLUBELO_RATINGS_URL`
 
 Se non e impostata, viene usata questa URL di default:
 
@@ -255,8 +313,8 @@ Per cambiare URL nel workflow GitHub Actions:
 
 1. Vai in `Settings` della repository.
 2. Apri `Secrets and variables` -> `Actions`.
-3. Crea o modifica una repository variable chiamata `FOOTBALL_DATA_SERIE_A_URL`.
-4. Inserisci la nuova URL CSV.
+3. Crea o modifica una repository variable chiamata `FOOTBALL_DATA_SERIE_A_URL` oppure `CLUBELO_RATINGS_URL`.
+4. Inserisci la nuova URL della fonte corrispondente.
 
 ## Limiti della fonte dati
 
@@ -265,3 +323,11 @@ Per cambiare URL nel workflow GitHub Actions:
 - La URL di default e legata alla stagione corrente pubblicata in repo.
 - Quando cambia stagione, potrebbe essere necessario aggiornare la URL di default o la variabile `FOOTBALL_DATA_SERIE_A_URL`.
 - Il workflow aggiornera il seed solo se la fonte esterna e raggiungibile e contiene dati validi.
+
+## Limiti dei team ratings
+
+- il rating Elo e un indicatore sintetico e non sostituisce le statistiche delle partite correnti
+- la disponibilita dipende da una fonte pubblica esterna
+- se una squadra non viene mappata correttamente, il rating resta vuoto ma l'app continua a funzionare
+- il seed rating puo essere temporaneamente meno aggiornato del seed partite
+- in questo step il predictor non usa ancora i rating Elo

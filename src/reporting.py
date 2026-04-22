@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.analytics import build_standings, compute_team_stats, get_team_match_log
 from src.predictor import predict_match
+from src.ratings import get_team_rating
 
 
 def _empty_split() -> dict[str, float | int | str]:
@@ -341,6 +342,11 @@ def build_match_report_data(
             },
         },
         "prediction": predict_match(df, home_team, away_team, max_goals=6),
+        "ratings": {
+            "home": get_team_rating(home_team),
+            "away": get_team_rating(away_team),
+            "note": "Il rating e usato come indicatore di forza storica/recente, non come certezza.",
+        },
         "table_context": {
             "home_position": positions.get(home_team),
             "away_position": positions.get(away_team),

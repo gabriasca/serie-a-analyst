@@ -119,6 +119,7 @@ defensive = profile["defensive"]
 home_away = profile["home_away"]
 recent = profile["recent"]
 indicators = profile["indicators"]
+rating = profile["rating"]
 vs_strength_rows = profile["vs_strength_buckets"]
 
 st.subheader("Riepilogo generale")
@@ -129,6 +130,18 @@ col3.metric("Partite", general["matches"])
 col4.metric("Gol fatti", general["goals_for"])
 col5.metric("Gol subiti", general["goals_against"])
 col6.metric("Differenza reti", general["goal_difference"])
+
+rating_col1, rating_col2, rating_col3 = st.columns(3)
+rating_col1.metric("Rating Elo", _format_number(rating.get("rating_value"), digits=0))
+rating_col2.metric("Fascia forza", rating.get("strength_band") or "n/d")
+rating_col3.metric("Rank Elo", rating.get("rating_rank") or "n/d")
+if rating.get("available"):
+    st.caption(
+        f"Rating informativo da {rating.get('source_name') or 'fonte esterna'} "
+        f"({rating.get('rating_date') or 'data n/d'})."
+    )
+else:
+    st.caption("Rating Elo non disponibile per questa squadra: il profilo resta basato solo sui dati partita.")
 
 st.subheader("Identita offensiva")
 off_col1, off_col2, off_col3, off_col4, off_col5 = st.columns(5)
@@ -170,6 +183,10 @@ recent_col3.metric("Gol fatti ultime 5", recent["goals_for"])
 recent_col4.metric("Gol subiti ultime 5", recent["goals_against"])
 
 st.subheader("Rendimento per tipo avversario")
+if profile.get("strength_bucket_source") == "elo":
+    st.caption("Le fasce forti/medie/deboli sono costruite con il ranking Elo attuale disponibile nel seed.")
+else:
+    st.caption("Le fasce forti/medie/deboli sono costruite con la classifica corrente della stagione.")
 _render_vs_strength(vs_strength_rows)
 
 chart_col1, chart_col2 = st.columns(2)
