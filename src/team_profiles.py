@@ -4,6 +4,11 @@ from typing import Any
 
 import pandas as pd
 
+from src.advanced_metrics import (
+    build_advanced_team_metrics,
+    build_metric_strengths_and_weaknesses,
+    get_team_advanced_metrics,
+)
 from src.analytics import RESULT_LABELS, build_standings, get_teams, prepare_matches_dataframe
 from src.ratings import build_strength_bucket_map, enrich_standings_with_ratings
 
@@ -238,6 +243,16 @@ def _build_notes(team_df: pd.DataFrame) -> list[str]:
             "mancano, il profilo si appoggia soprattutto a gol e punti."
         )
     return notes
+
+
+def _merge_unique_items(primary: list[str], secondary: list[str], limit: int = 4) -> list[str]:
+    merged: list[str] = []
+    for item in primary + secondary:
+        if item and item not in merged:
+            merged.append(item)
+        if len(merged) >= limit:
+            break
+    return merged
 
 
 def compute_offensive_profile(
@@ -520,6 +535,7 @@ def build_strengths_and_weaknesses(profile: dict[str, Any]) -> dict[str, list[st
     recent = profile.get("recent", {})
     general = profile.get("general", {})
     indicators = profile.get("indicators", {})
+    advanced = profile.get("advanced_metrics", {})
     versus = {row.get("bucket_key", row["bucket_label"]): row for row in profile.get("vs_strength_buckets", [])}
 
     off_index = float(offensive.get("indice_pericolosita_offensiva", 100.0))
@@ -561,6 +577,11 @@ def build_strengths_and_weaknesses(profile: dict[str, Any]) -> dict[str, list[st
     if not weaknesses:
         weaknesses.append("Non emergono criticita nette, ma il margine di miglioramento resta distribuito su piu aree.")
 
+    if advanced:
+        advanced_feedback = build_metric_strengths_and_weaknesses(advanced)
+        strengths = _merge_unique_items(strengths, advanced_feedback["strengths"])
+        weaknesses = _merge_unique_items(weaknesses, advanced_feedback["weaknesses"])
+
     return {
         "strengths": strengths[:4],
         "weaknesses": weaknesses[:4],
@@ -577,6 +598,7 @@ def build_team_profile_summary(profile: dict[str, Any]) -> str:
     home_away = profile["home_away"]
     recent = profile["recent"]
     rating = profile.get("rating", {})
+    advanced = profile.get("advanced_metrics", {})
     versus = {row.get("bucket_key", row["bucket_label"]): row for row in profile["vs_strength_buckets"]}
     archetypes = ", ".join(profile["archetypes"][:4])
 
@@ -606,6 +628,13 @@ def build_team_profile_summary(profile: dict[str, Any]) -> str:
         lines.append(
             f"Il rating Elo attuale e {rating['rating_value']:.0f}, con fascia forza {rating['strength_band']} "
             f"tra le squadre coperte dal seed."
+        )
+    if advanced:
+        lines.append(
+            f"Nel layer Metriche Avanzate v1 emergono pericolosita offensiva a "
+            f"{advanced.get('offensive_threat_index', 'n/d')}/100, solidita difensiva a "
+            f"{advanced.get('defensive_solidity_index', 'n/d')}/100 e momento recente a "
+            f"{advanced.get('recent_momentum_index', 'n/d')}/100."
         )
 
     top_bucket = versus.get(TOP_BUCKET_KEY)
@@ -691,12 +720,14 @@ def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
         "strength_band": row.get("Fascia forza") if pd.notna(row.get("Fascia forza")) else None,
         "rating_rank": int(row.get("Elo Rank")) if pd.notna(row.get("Elo Rank")) else None,
     }
+    advanced_metrics = get_team_advanced_metrics(build_advanced_team_metrics(df), team) or {}
 
     profile = {
         "ok": True,
         "team": team,
         "general": general,
         "rating": rating,
+        "advanced_metrics": advanced_metrics,
         "offensive": offensive,
         "defensive": defensive,
         "home_away": home_away,

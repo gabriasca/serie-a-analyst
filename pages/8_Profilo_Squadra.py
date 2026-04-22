@@ -120,6 +120,7 @@ home_away = profile["home_away"]
 recent = profile["recent"]
 indicators = profile["indicators"]
 rating = profile["rating"]
+advanced = profile.get("advanced_metrics", {})
 vs_strength_rows = profile["vs_strength_buckets"]
 
 st.subheader("Riepilogo generale")
@@ -181,6 +182,28 @@ recent_col1.metric("Ultime 5", recent["form_string"])
 recent_col2.metric("Punti ultime 5", recent["points"])
 recent_col3.metric("Gol fatti ultime 5", recent["goals_for"])
 recent_col4.metric("Gol subiti ultime 5", recent["goals_against"])
+
+if advanced:
+    st.subheader("Metriche avanzate v1")
+    st.caption("Indicatori interni 0-100 basati sui dati aggregati disponibili. Non sono xG reali.")
+    adv_col1, adv_col2, adv_col3, adv_col4 = st.columns(4)
+    adv_col1.metric(
+        "Pericolosita offensiva",
+        _format_number(advanced.get("offensive_threat_index"), digits=1),
+    )
+    adv_col2.metric(
+        "Solidita difensiva",
+        _format_number(advanced.get("defensive_solidity_index"), digits=1),
+    )
+    adv_col3.metric(
+        "Momento recente",
+        _format_number(advanced.get("recent_momentum_index"), digits=1),
+    )
+    adv_col4.metric(
+        "Forza calendario",
+        _format_number(advanced.get("schedule_strength_index"), digits=1),
+    )
+    st.caption(advanced.get("schedule_strength_note") or "Forza calendario non disponibile.")
 
 st.subheader("Rendimento per tipo avversario")
 if profile.get("strength_bucket_source") == "elo":

@@ -107,13 +107,48 @@ I rating Elo non vanno confusi con le statistiche partita:
 - le statistiche partita descrivono cio che la squadra sta producendo nella stagione corrente
 - i due livelli sono complementari ma non equivalenti
 
+## Metriche avanzate interne
+
+L'app include anche un primo layer `Metriche Avanzate v1`, costruito solo con i dati gia presenti nel database.
+
+Indicatori principali:
+
+- pericolosita offensiva
+- solidita difensiva
+- volume offensivo
+- rischio difensivo
+- efficienza realizzativa
+- dipendenza casa
+- momento recente
+- forza calendario
+
+Caratteristiche:
+
+- ogni indice e espresso su scala `0-100`
+- `50` rappresenta circa la media del campionato nella stagione letta
+- gli indici sono interni e non sono `xG` reali
+- la forza calendario usa Elo quando il seed copre la stagione; altrimenti usa la classifica corrente
+
+Uso attuale nell'app:
+
+- `Metriche Avanzate` mostra tabella squadre, dettaglio per team e classifiche rapide
+- `Profilo Squadra` integra i principali indici avanzati nel profilo e nei punti forti/deboli
+- `Report Partita` confronta le due squadre su pericolosita offensiva, solidita difensiva e momento recente
+
+Limiti:
+
+- non sostituiscono un modello evento-per-evento
+- soffrono dataset incompleti o colonne mancanti su tiri, tiri in porta o corner
+- con campioni piccoli descrivono tendenze utili, ma non stabili
+- non entrano ancora nel predictor e non modificano le proiezioni
+
 ## Limiti dell'MVP
 
 - non usa API esterne
 - non usa scraping
 - non include quote scommesse
 - il modello predittivo non e una black box, ma resta semplice
-- non gestisce ancora metriche avanzate come xG reali o infortuni
+- non gestisce ancora metriche evento-per-evento o infortuni
 - i rating Elo sono informativi e non guidano ancora il predictor
 
 ## Prossimi step consigliati

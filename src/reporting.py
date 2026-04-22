@@ -4,6 +4,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.advanced_metrics import build_advanced_team_metrics, get_team_advanced_metrics
 from src.analytics import build_standings, compute_team_stats, get_team_match_log
 from src.predictor import predict_match
 from src.ratings import get_team_rating
@@ -129,6 +130,83 @@ def _classifica_note(
     )
 
 
+def _safe_metric_value(metrics: dict[str, Any] | None, key: str) -> float | None:
+    if not metrics:
+        return None
+    value = metrics.get(key)
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_advanced_comparison(df: pd.DataFrame, home_team: str, away_team: str) -> dict[str, Any]:
+    metrics_df = build_advanced_team_metrics(df)
+    home_metrics = get_team_advanced_metrics(metrics_df, home_team)
+    away_metrics = get_team_advanced_metrics(metrics_df, away_team)
+    if not home_metrics or not away_metrics:
+        return {
+            "available": False,
+            "home": home_metrics,
+            "away": away_metrics,
+            "key_factors": [],
+            "note": "Metriche avanzate non disponibili in modo completo per questo confronto.",
+        }
+
+    factors: list[str] = []
+
+    offense_gap = _safe_metric_value(home_metrics, "offensive_threat_index")
+    away_offense = _safe_metric_value(away_metrics, "offensive_threat_index")
+    if offense_gap is not None and away_offense is not None and abs(offense_gap - away_offense) >= 6:
+        leader = home_team if offense_gap > away_offense else away_team
+        leader_value = max(offense_gap, away_offense)
+        trailer = away_team if leader == home_team else home_team
+        trailer_value = min(offense_gap, away_offense)
+        factors.append(
+            f"Pericolosita offensiva: {leader} arriva con un indice piu alto ({leader_value:.1f} contro {trailer_value:.1f}), "
+            f"quindi parte con piu segnali di pressione offensiva rispetto a {trailer}."
+        )
+
+    home_solidity = _safe_metric_value(home_metrics, "defensive_solidity_index")
+    away_solidity = _safe_metric_value(away_metrics, "defensive_solidity_index")
+    if home_solidity is not None and away_solidity is not None and abs(home_solidity - away_solidity) >= 6:
+        leader = home_team if home_solidity > away_solidity else away_team
+        leader_value = max(home_solidity, away_solidity)
+        trailer = away_team if leader == home_team else home_team
+        trailer_value = min(home_solidity, away_solidity)
+        factors.append(
+            f"Solidita difensiva: {leader} offre una tenuta migliore ({leader_value:.1f} contro {trailer_value:.1f}), "
+            f"aspetto che puo pesare nella gestione dei momenti sporchi della partita."
+        )
+
+    home_momentum = _safe_metric_value(home_metrics, "recent_momentum_index")
+    away_momentum = _safe_metric_value(away_metrics, "recent_momentum_index")
+    if home_momentum is not None and away_momentum is not None and abs(home_momentum - away_momentum) >= 6:
+        leader = home_team if home_momentum > away_momentum else away_team
+        leader_value = max(home_momentum, away_momentum)
+        trailer = away_team if leader == home_team else home_team
+        trailer_value = min(home_momentum, away_momentum)
+        factors.append(
+            f"Momento recente: {leader} entra con un indice migliore ({leader_value:.1f} contro {trailer_value:.1f}), "
+            "quindi la forma delle ultime uscite tende a spingere il suo profilo."
+        )
+
+    if not factors:
+        factors.append(
+            "Le metriche avanzate leggono un confronto abbastanza equilibrato: non emerge un margine netto nei principali indicatori interni."
+        )
+
+    return {
+        "available": True,
+        "home": home_metrics,
+        "away": away_metrics,
+        "key_factors": factors[:3],
+        "note": "Questi indicatori interni aiutano a leggere il match, ma non sono xG reali e non danno certezze.",
+    }
+
+
 def build_key_factors(report_data: dict[str, Any]) -> list[str]:
     home = report_data["home_team"]
     away = report_data["away_team"]
@@ -136,8 +214,10 @@ def build_key_factors(report_data: dict[str, Any]) -> list[str]:
     away_recent = report_data["recent_form"]["away"]
     home_general = report_data["general_performance"]["home"]
     away_general = report_data["general_performance"]["away"]
+    advanced = report_data.get("advanced_metrics", {})
 
     factors: list[str] = []
+    factors.extend(advanced.get("key_factors", [])[:3])
 
     recent_gap = home_recent["points"] - away_recent["points"]
     if recent_gap > 0:
@@ -254,6 +334,7 @@ def build_match_summary(report_data: dict[str, Any]) -> str:
     away_general = report_data["general_performance"]["away"]
     impact = report_data["table_context"]["note"]
     prediction = report_data["prediction"]
+    advanced = report_data.get("advanced_metrics", {})
 
     form_leader = home if home_recent["points"] >= away_recent["points"] else away
     attack_leader = home if home_general["avg_goals_for"] >= away_general["avg_goals_for"] else away
@@ -267,6 +348,13 @@ def build_match_summary(report_data: dict[str, Any]) -> str:
         f"Sul piano del volume offensivo il riferimento e {attack_leader}, mentre la tenuta difensiva migliore appartiene a {defense_leader}.",
         impact,
     ]
+    if advanced.get("available"):
+        summary_lines.append(
+            f"Le metriche avanzate interne leggono pericolosita offensiva a "
+            f"{advanced['home'].get('offensive_threat_index', 'n/d')}/100 per {home} e "
+            f"{advanced['away'].get('offensive_threat_index', 'n/d')}/100 per {away}, con un confronto "
+            f"anche su solidita difensiva e momento recente."
+        )
 
     if prediction.get("ok"):
         probs = prediction["probabilities"]
@@ -347,6 +435,7 @@ def build_match_report_data(
             "away": get_team_rating(away_team),
             "note": "Il rating e usato come indicatore di forza storica/recente, non come certezza.",
         },
+        "advanced_metrics": _build_advanced_comparison(df, home_team, away_team),
         "table_context": {
             "home_position": positions.get(home_team),
             "away_position": positions.get(away_team),

@@ -75,6 +75,9 @@ table_context = report["table_context"]
 ratings = report.get("ratings", {})
 home_rating = ratings.get("home")
 away_rating = ratings.get("away")
+advanced = report.get("advanced_metrics", {})
+home_advanced = advanced.get("home") or {}
+away_advanced = advanced.get("away") or {}
 
 st.header(report["match_title"])
 
@@ -98,6 +101,43 @@ with rating_col2:
         f"{away_rating['rating_value']:.0f}" if away_rating else "n/d",
     )
 st.caption(ratings.get("note", "Il rating e usato come indicatore di forza storica/recente, non come certezza."))
+
+st.subheader("Metriche avanzate interne")
+st.caption(advanced.get("note", "Questi indicatori interni aiutano a leggere il match, ma non sono xG reali."))
+if advanced.get("available"):
+    adv_left, adv_right = st.columns(2)
+    with adv_left:
+        st.markdown(f"### {report['home_team']}")
+        adv_metric1, adv_metric2, adv_metric3 = st.columns(3)
+        adv_metric1.metric(
+            "Pericolosita offensiva",
+            f"{home_advanced.get('offensive_threat_index', 0):.1f}" if home_advanced.get("offensive_threat_index") is not None else "n/d",
+        )
+        adv_metric2.metric(
+            "Solidita difensiva",
+            f"{home_advanced.get('defensive_solidity_index', 0):.1f}" if home_advanced.get("defensive_solidity_index") is not None else "n/d",
+        )
+        adv_metric3.metric(
+            "Momento recente",
+            f"{home_advanced.get('recent_momentum_index', 0):.1f}" if home_advanced.get("recent_momentum_index") is not None else "n/d",
+        )
+    with adv_right:
+        st.markdown(f"### {report['away_team']}")
+        adv_metric1, adv_metric2, adv_metric3 = st.columns(3)
+        adv_metric1.metric(
+            "Pericolosita offensiva",
+            f"{away_advanced.get('offensive_threat_index', 0):.1f}" if away_advanced.get("offensive_threat_index") is not None else "n/d",
+        )
+        adv_metric2.metric(
+            "Solidita difensiva",
+            f"{away_advanced.get('defensive_solidity_index', 0):.1f}" if away_advanced.get("defensive_solidity_index") is not None else "n/d",
+        )
+        adv_metric3.metric(
+            "Momento recente",
+            f"{away_advanced.get('recent_momentum_index', 0):.1f}" if away_advanced.get("recent_momentum_index") is not None else "n/d",
+        )
+else:
+    st.caption("Metriche avanzate non disponibili in modo completo per questa partita.")
 
 st.subheader("Forma recente")
 left_form, right_form = st.columns(2)
