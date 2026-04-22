@@ -544,7 +544,7 @@ def list_competitions() -> list[dict[str, Any]]:
                 ORDER BY active DESC, competition_name ASC, competition_code ASC
                 """
             ).fetchall()
-        except sqlite3.OperationalError:
+        except sqlite3.Error:
             return []
 
     return [
@@ -595,7 +595,7 @@ def get_competition_summary() -> list[dict[str, Any]]:
                     DEFAULT_COMPETITION_TYPE,
                 ),
             ).fetchall()
-        except sqlite3.OperationalError:
+        except sqlite3.Error:
             return []
 
     return [
@@ -674,26 +674,32 @@ def get_database_status() -> dict[str, Any]:
             status["season_count"] = len(status["seasons"])
 
         if {"source_name", "source_url"}.issubset(match_columns):
-            status["sources"] = [
-                {
-                    "source_name": row[0],
-                    "source_url": row[1],
-                    "match_count": int(row[2]),
-                }
-                for row in conn.execute(
-                    """
-                    SELECT
-                        COALESCE(source_name, '(non specificata)') AS source_name,
-                        NULLIF(MAX(COALESCE(source_url, '')), '') AS source_url,
-                        COUNT(*) AS match_count
-                    FROM matches
-                    GROUP BY COALESCE(source_name, '(non specificata)')
-                    ORDER BY match_count DESC, source_name ASC
-                    """
-                ).fetchall()
-            ]
+            try:
+                status["sources"] = [
+                    {
+                        "source_name": row[0],
+                        "source_url": row[1],
+                        "match_count": int(row[2]),
+                    }
+                    for row in conn.execute(
+                        """
+                        SELECT
+                            COALESCE(source_name, '(non specificata)') AS source_name,
+                            NULLIF(MAX(COALESCE(source_url, '')), '') AS source_url,
+                            COUNT(*) AS match_count
+                        FROM matches
+                        GROUP BY COALESCE(source_name, '(non specificata)')
+                        ORDER BY match_count DESC, source_name ASC
+                        """
+                    ).fetchall()
+                ]
+            except Exception:
+                status["sources"] = []
 
-    status["competitions"] = get_competition_summary()
+    try:
+        status["competitions"] = get_competition_summary()
+    except Exception:
+        status["competitions"] = []
     return status
 
 

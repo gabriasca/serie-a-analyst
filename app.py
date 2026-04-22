@@ -1,17 +1,85 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-import pandas as pd
 import streamlit as st
 
-from src.config import APP_TITLE, PUBLIC_DEMO_BANNER, PUBLIC_DEMO_MODE
+try:
+    from src import config
+except Exception:  # pragma: no cover - defensive fallback for cloud/runtime issues
+    config = None
+
 from src.db import get_database_status
 from src.seed_data import bootstrap_database
 
 
+APP_TITLE = getattr(config, "APP_TITLE", "Serie A Analyst")
+PUBLIC_DEMO_MODE = getattr(config, "PUBLIC_DEMO_MODE", True)
+PUBLIC_DEMO_BANNER = getattr(
+    config,
+    "PUBLIC_DEMO_BANNER",
+    "Versione pubblica demo: dati snapshot, previsioni statistiche non certe.",
+)
+
+
+def safe_list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
+def safe_int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def safe_status(status: object) -> dict[str, object]:
+    if not isinstance(status, dict):
+        status = {}
+    return {
+        "database_ready": bool(status.get("database_ready", False)),
+        "match_count": safe_int(status.get("match_count", 0)),
+        "team_count": safe_int(status.get("team_count", 0)),
+        "season_count": safe_int(status.get("season_count", 0)),
+        "seasons": safe_list(status.get("seasons", [])),
+        "sources": safe_list(status.get("sources", [])),
+        "competitions": safe_list(status.get("competitions", [])),
+    }
+
+
+def format_competitions(competitions: object) -> str:
+    labels: list[str] = []
+    for comp in safe_list(competitions):
+        if isinstance(comp, dict):
+            name = comp.get("competition_name") or comp.get("competition_code") or "Competizione"
+            count = comp.get("match_count")
+            labels.append(f"{name} ({count})" if count is not None else str(name))
+        else:
+            labels.append(str(comp))
+    return ", ".join(labels) if labels else "nessuna"
+
+
+def format_sources(sources: object) -> str:
+    labels: list[str] = []
+    for source in safe_list(sources):
+        if isinstance(source, dict):
+            name = source.get("source_name") or "Fonte dati"
+            count = source.get("match_count")
+            labels.append(f"{name} ({count})" if count is not None else str(name))
+        else:
+            labels.append(str(source))
+    return ", ".join(labels) if labels else "nessuna"
+
+
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-bootstrap_database()
-db_status = get_database_status()
+status_error = None
+try:
+    bootstrap_database()
+    db_status = safe_status(get_database_status())
+except Exception as exc:  # pragma: no cover - defensive fallback for cloud/runtime issues
+    db_status = safe_status({})
+    status_error = str(exc)
+
+seasons = safe_list(db_status.get("seasons", []))
 
 st.title(APP_TITLE)
 st.write(
@@ -23,41 +91,30 @@ st.write(
 
 if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)
+if status_error:
+    st.warning("Stato database non completamente disponibile in questo momento.")
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Database", "Pronto" if db_status["database_ready"] else "Non inizializzato")
-col2.metric("Partite caricate", db_status["match_count"])
-col3.metric("Squadre", db_status["team_count"])
-col4.metric("Stagioni", len(db_status.get("seasons", [])))
+col1.metric("Database", "Pronto" if db_status.get("database_ready", False) else "Non inizializzato")
+col2.metric("Partite caricate", db_status.get("match_count", 0))
+col3.metric("Squadre", db_status.get("team_count", 0))
+col4.metric("Stagioni", len(seasons))
 
 st.subheader("Stato del progetto")
-st.write(
-    f"Stagioni disponibili: "
-    f"{', '.join(db_status.get('seasons', [])) if db_status.get('seasons', []) else 'nessuna'}"
-)
+st.write(f"Stagioni disponibili: {', '.join(str(season) for season in seasons) if seasons else 'nessuna'}")
 st.write(
     "Usa il menu laterale per importare nuovi CSV, esplorare la dashboard del campionato, "
     "analizzare una squadra, confrontarne due o stimare una partita."
 )
 
-if db_status["match_count"] == 0:
+if db_status.get("match_count", 0) == 0:
     st.info(
         "Il database e vuoto. Vai alla pagina Import Dati per caricare un CSV reale "
         "oppure il dataset demo di test."
     )
 
-if db_status.get("competitions", []):
-    st.write("Competizioni presenti:")
-    st.dataframe(pd.DataFrame(db_status.get("competitions", [])), use_container_width=True)
-else:
-    st.write("Competizioni presenti: nessuna")
-
-if db_status.get("sources", []):
-    sources_df = pd.DataFrame(db_status.get("sources", []))
-    st.write("Fonti dati rilevate:")
-    st.dataframe(sources_df, use_container_width=True)
-else:
-    st.write("Fonti dati rilevate: nessuna")
+st.write("Competizioni presenti: " + format_competitions(db_status.get("competitions", [])))
+st.write("Fonti dati rilevate: " + format_sources(db_status.get("sources", [])))
 
 st.warning(
     "Le previsioni mostrate nell'app sono stime statistiche basate sui dati disponibili, "

@@ -1,16 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
-from src.config import (
-    APP_TITLE,
-    DEFAULT_COMPETITION_CODE,
-    DEFAULT_COMPETITION_NAME,
-    DEFAULT_COMPETITION_TYPE,
-    PUBLIC_DEMO_BANNER,
-    PUBLIC_DEMO_MODE,
-)
+try:
+    from src import config
+except Exception:  # pragma: no cover - defensive fallback for cloud/runtime issues
+    config = None
+
 from src.data_import import (
     clean_match_data,
     load_csv_to_dataframe,
@@ -22,10 +19,78 @@ from src.demo_data import load_demo_data
 from src.seed_data import bootstrap_database
 
 
+APP_TITLE = getattr(config, "APP_TITLE", "Serie A Analyst")
+PUBLIC_DEMO_MODE = getattr(config, "PUBLIC_DEMO_MODE", True)
+PUBLIC_DEMO_BANNER = getattr(
+    config,
+    "PUBLIC_DEMO_BANNER",
+    "Versione pubblica demo: dati snapshot, previsioni statistiche non certe.",
+)
+DEFAULT_COMPETITION_CODE = getattr(config, "DEFAULT_COMPETITION_CODE", "ITA_SERIE_A")
+DEFAULT_COMPETITION_NAME = getattr(config, "DEFAULT_COMPETITION_NAME", "Serie A")
+DEFAULT_COMPETITION_TYPE = getattr(config, "DEFAULT_COMPETITION_TYPE", "league")
+
+
+def safe_list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
+def safe_int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def safe_status(status: object) -> dict[str, object]:
+    if not isinstance(status, dict):
+        status = {}
+    return {
+        "database_ready": bool(status.get("database_ready", False)),
+        "match_count": safe_int(status.get("match_count", 0)),
+        "team_count": safe_int(status.get("team_count", 0)),
+        "season_count": safe_int(status.get("season_count", 0)),
+        "seasons": safe_list(status.get("seasons", [])),
+        "sources": safe_list(status.get("sources", [])),
+        "competitions": safe_list(status.get("competitions", [])),
+    }
+
+
+def format_competitions(competitions: object) -> str:
+    labels: list[str] = []
+    for comp in safe_list(competitions):
+        if isinstance(comp, dict):
+            name = comp.get("competition_name") or comp.get("competition_code") or "Competizione"
+            count = comp.get("match_count")
+            labels.append(f"{name} ({count})" if count is not None else str(name))
+        else:
+            labels.append(str(comp))
+    return ", ".join(labels) if labels else "nessuna"
+
+
+def format_sources(sources: object) -> str:
+    labels: list[str] = []
+    for source in safe_list(sources):
+        if isinstance(source, dict):
+            name = source.get("source_name") or "Fonte dati"
+            count = source.get("match_count")
+            labels.append(f"{name} ({count})" if count is not None else str(name))
+        else:
+            labels.append(str(source))
+    return ", ".join(labels) if labels else "nessuna"
+
+
 st.set_page_config(page_title=f"{APP_TITLE} | Import Dati", layout="wide")
 
-bootstrap_database()
-db_status = get_database_status()
+status_error = None
+try:
+    bootstrap_database()
+    db_status = safe_status(get_database_status())
+except Exception as exc:  # pragma: no cover - defensive fallback for cloud/runtime issues
+    db_status = safe_status({})
+    status_error = str(exc)
+
+seasons = safe_list(db_status.get("seasons", []))
 
 st.title("Import Dati")
 
@@ -33,63 +98,56 @@ if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)
     st.write("Questa pagina e informativa nella versione pubblica.")
     st.subheader("Stato database")
+    if status_error:
+        st.warning("Stato database non completamente disponibile in questo momento.")
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Partite caricate", db_status["match_count"])
-    col2.metric("Squadre", db_status["team_count"])
-    col3.metric("Stagioni", len(db_status.get("seasons", [])))
+    col1.metric("Partite caricate", db_status.get("match_count", 0))
+    col2.metric("Squadre", db_status.get("team_count", 0))
+    col3.metric("Stagioni", len(seasons))
 
-    st.write(
-        f"Stagioni presenti: {', '.join(db_status.get('seasons', [])) if db_status.get('seasons', []) else 'nessuna'}"
-    )
-
-    if db_status.get("competitions", []):
-        st.write("Competizioni presenti:")
-        st.dataframe(pd.DataFrame(db_status.get("competitions", [])), use_container_width=True)
-    else:
-        st.write("Competizioni presenti: nessuna")
-
-    if db_status.get("sources", []):
-        st.write("Fonti dati:")
-        st.dataframe(pd.DataFrame(db_status.get("sources", [])), use_container_width=True)
-    else:
-        st.write("Fonti dati: nessuna")
-
+    st.write(f"Stagioni presenti: {', '.join(str(season) for season in seasons) if seasons else 'nessuna'}")
+    st.write("Competizioni presenti: " + format_competitions(db_status.get("competitions", [])))
+    st.write("Fonti dati: " + format_sources(db_status.get("sources", [])))
     st.info(
         "Questa versione pubblica e consultabile. "
         "Gli aggiornamenti dati vengono fatti dall'autore aggiornando il CSV seed."
     )
 
-    if db_status["match_count"] == 0:
+    if db_status.get("match_count", 0) == 0:
         st.warning("Il database e vuoto. La versione pubblica richiede una snapshot seed pubblicata dall'autore.")
 
     st.stop()
 
 st.write("Gestisci il database locale, carica il dataset demo per test oppure importa un CSV reale.")
+if status_error:
+    st.warning("Stato database non completamente disponibile in questo momento.")
 
 page_message = st.session_state.pop("import_data_message", None)
-if page_message:
-    getattr(st, page_message["level"])(page_message["text"])
+if isinstance(page_message, dict):
+    level = page_message.get("level", "info")
+    text = page_message.get("text", "")
+    getattr(st, level if hasattr(st, level) else "info")(text)
 
 st.subheader("Gestione database")
 col1, col2, col3 = st.columns(3)
-col1.metric("Partite totali", db_status["match_count"])
-col2.metric("Squadre", db_status["team_count"])
-col3.metric("Stagioni", len(db_status.get("seasons", [])))
+col1.metric("Partite totali", db_status.get("match_count", 0))
+col2.metric("Squadre", db_status.get("team_count", 0))
+col3.metric("Stagioni", len(seasons))
 
-st.write(
-    f"Stagioni presenti: {', '.join(db_status.get('seasons', [])) if db_status.get('seasons', []) else 'nessuna'}"
-)
+st.write(f"Stagioni presenti: {', '.join(str(season) for season in seasons) if seasons else 'nessuna'}")
 
-if db_status.get("competitions", []):
+competitions = safe_list(db_status.get("competitions", []))
+if competitions:
     st.write("Competizioni presenti:")
-    st.dataframe(pd.DataFrame(db_status.get("competitions", [])), use_container_width=True)
+    st.dataframe(pd.DataFrame(competitions), use_container_width=True)
 else:
     st.write("Competizioni presenti: nessuna")
 
-if db_status.get("sources", []):
+sources = safe_list(db_status.get("sources", []))
+if sources:
     st.write("Fonti dati presenti:")
-    st.dataframe(pd.DataFrame(db_status.get("sources", [])), use_container_width=True)
+    st.dataframe(pd.DataFrame(sources), use_container_width=True)
 else:
     st.write("Fonti dati presenti: nessuna")
 
@@ -99,7 +157,7 @@ st.info(
 )
 
 if st.button("Carica dataset demo"):
-    if db_status["match_count"] > 0:
+    if db_status.get("match_count", 0) > 0:
         st.session_state["import_data_message"] = {
             "level": "warning",
             "text": (
@@ -133,8 +191,8 @@ if st.button("Svuota database", disabled=not confirm_delete_all):
     st.rerun()
 
 st.markdown("---")
-if db_status.get("seasons", []):
-    season_to_delete = st.selectbox("Seleziona stagione da eliminare", db_status.get("seasons", []))
+if seasons:
+    season_to_delete = st.selectbox("Seleziona stagione da eliminare", seasons)
 else:
     season_to_delete = None
     st.selectbox("Seleziona stagione da eliminare", ["Nessuna stagione disponibile"], disabled=True)
@@ -145,9 +203,9 @@ confirm_delete_season = st.checkbox(
 )
 if st.button(
     "Elimina stagione selezionata",
-    disabled=not (season_to_delete and confirm_delete_season and db_status.get("seasons", [])),
+    disabled=not (season_to_delete and confirm_delete_season and seasons),
 ):
-    deleted_count = delete_matches_by_season(season_to_delete)
+    deleted_count = delete_matches_by_season(str(season_to_delete))
     st.session_state["import_data_message"] = {
         "level": "success",
         "text": (
@@ -231,9 +289,7 @@ if uploaded_file is not None:
                 st.write("Competizione/i che verranno salvate:")
                 st.dataframe(detected_competitions, use_container_width=True)
 
-            overlapping_seasons = [
-                season for season in detected_seasons if season in db_status.get("seasons", [])
-            ]
+            overlapping_seasons = [season for season in detected_seasons if season in seasons]
             if overlapping_seasons:
                 st.warning(
                     "Nel database esistono gia dati per: "
