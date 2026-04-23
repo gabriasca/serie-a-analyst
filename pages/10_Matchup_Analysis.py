@@ -126,6 +126,7 @@ if analysis:
     away_profile = analysis["away_profile"]
     predictor_context = analysis.get("predictor_context", {})
     style_advantage = analysis.get("style_advantage", {})
+    context_engine = analysis.get("context_engine", {})
 
     st.subheader("Riepilogo partita")
     st.write(f"**{analysis['home_team']} vs {analysis['away_team']}**")
@@ -199,6 +200,27 @@ if analysis:
         st.metric("Lettura matchup", style_advantage.get("label", "matchup equilibrato"))
     with adv_col2:
         st.write(style_advantage.get("explanation", "Non emerge un vantaggio stilistico netto."))
+
+    if context_engine:
+        st.subheader("Peso del dato e contesto")
+        ctx_col1, ctx_col2, ctx_col3, ctx_col4 = st.columns(4)
+        ctx_col1.metric("Edge corretto", _format_number(context_engine.get("adjusted_edge"), digits=2))
+        ctx_col2.metric("Rischio pareggio", _format_number(context_engine.get("draw_risk"), digits=1, suffix="/100"))
+        ctx_col3.metric("Rischio upset", _format_number(context_engine.get("upset_risk"), digits=1, suffix="/100"))
+        ctx_col4.metric("Confidenza", _format_number(context_engine.get("confidence"), digits=1, suffix="/100"))
+        st.caption(context_engine.get("textual_explanation", "Il motore contestuale non ha prodotto una lettura completa."))
+
+        top_weighted = context_engine.get("weighted_factors", [])[:4]
+        if top_weighted:
+            st.caption("Fattori che pesano di piu nel contesto:")
+            factor_lines = []
+            for factor in top_weighted:
+                factor_lines.append(
+                    f"{factor.get('label')}: impatto {factor.get('weighted_impact', 0.0):.2f}, "
+                    f"affidabilita {factor.get('reliability', 0.0):.2f}, rilevanza {factor.get('context_relevance', 0.0):.2f}. "
+                    f"{factor.get('note', '')}"
+                )
+            _render_bullets(factor_lines)
 
     risk_col1, risk_col2 = st.columns(2)
     with risk_col1:

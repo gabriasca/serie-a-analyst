@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.advanced_metrics import build_advanced_team_metrics, get_team_advanced_metrics
 from src.analytics import get_teams, prepare_matches_dataframe
+from src.context_engine import build_context_adjusted_edge
 from src.predictor import predict_match
 from src.team_profiles import build_team_profile
 
@@ -565,6 +566,13 @@ def build_matchup_analysis(
     comparison_rows = compare_advanced_metrics(home_metrics, away_metrics, home_team=home_team, away_team=away_team)
     mismatches = identify_key_mismatches(home_profile, away_profile, predictor_context=predictor_context, comparison_rows=comparison_rows)
     style_advantage = build_style_advantage(home_profile, away_profile, predictor)
+    context_engine = build_context_adjusted_edge(
+        home_profile,
+        away_profile,
+        predictor_context=predictor_context,
+        mismatches=mismatches,
+        style_advantage=style_advantage,
+    )
     home_risks = build_home_team_risks(home_profile, away_profile, predictor_context=predictor_context)
     away_risks = build_away_team_risks(home_profile, away_profile, predictor_context=predictor_context)
     tactical_questions = build_tactical_questions(home_profile, away_profile, predictor_context=predictor_context)
@@ -579,6 +587,8 @@ def build_matchup_analysis(
         warnings.append("Predictor non disponibile: la pagina mostra comunque un'analisi matchup parziale.")
     if not home_metrics or not away_metrics:
         warnings.append("Metriche avanzate non complete: alcuni mismatch sono letti soprattutto con profilo squadra e rendimento.")
+    if float(context_engine.get("confidence", 0.0) or 0.0) < 45.0:
+        warnings.append("Il contesto abbassa la confidenza della lettura: il matchup resta molto aperto o con segnali contrastanti.")
 
     return {
         "ok": True,
@@ -591,6 +601,7 @@ def build_matchup_analysis(
         "metric_comparison": comparison_rows,
         "predictor": predictor,
         "predictor_context": predictor_context,
+        "context_engine": context_engine,
         "mismatches": mismatches,
         "style_advantage": style_advantage,
         "home_risks": home_risks,

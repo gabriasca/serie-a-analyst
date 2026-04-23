@@ -162,6 +162,7 @@ Cosa produce:
 - predictor sintetico con probabilita e score piu probabili
 - confronto diretto delle metriche interne
 - mismatch principali tra attacco, difesa, forma e contesto
+- motore di peso del dato e contesto con edge corretto, rischio pareggio, rischio upset e confidenza
 - rischi specifici per squadra casa e squadra trasferta
 - sintesi finale del matchup
 
