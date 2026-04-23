@@ -142,6 +142,42 @@ Limiti:
 - con campioni piccoli descrivono tendenze utili, ma non stabili
 - non entrano ancora nel predictor e non modificano le proiezioni
 
+## Matchup Analysis
+
+La pagina `Matchup Analysis` serve a leggere perche una squadra puo trovarsi meglio o peggio contro un'avversaria specifica.
+
+Usa:
+
+- classifica e punti
+- forma recente
+- rendimento casa/fuori
+- rating Elo informativo, se disponibile
+- Profilo Squadra / DNA Squadra
+- Metriche Avanzate interne
+- predictor esistente, senza modificarlo
+
+Cosa produce:
+
+- riepilogo statistico della sfida
+- predictor sintetico con probabilita e score piu probabili
+- confronto diretto delle metriche interne
+- mismatch principali tra attacco, difesa, forma e contesto
+- rischi specifici per squadra casa e squadra trasferta
+- sintesi finale del matchup
+
+Differenza rispetto al predictor:
+
+- il predictor stima probabilita e punteggi
+- Matchup Analysis spiega il perche del confronto con regole semplici e leggibili
+- le due letture sono complementari, non equivalenti
+
+Limiti:
+
+- non usa dati evento-per-evento o fonti esterne aggiuntive
+- resta sensibile a campioni piccoli o a stagioni con dati incompleti
+- il rating Elo e solo informativo
+- non trasforma mai il dato statistico in una certezza
+
 ## Limiti dell'MVP
 
 - non usa API esterne
