@@ -234,13 +234,24 @@ def _strength_band_from_rank(rank: int, total: int) -> str | None:
     return STRENGTH_BAND_BASSA
 
 
-def enrich_standings_with_ratings(standings_df: pd.DataFrame) -> pd.DataFrame:
+def enrich_standings_with_ratings(
+    standings_df: pd.DataFrame,
+    ratings_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     if standings_df.empty:
         return standings_df.copy()
 
     working_df = standings_df.reset_index()
     index_name = standings_df.index.name or working_df.columns[0]
-    rating_df = fetch_latest_team_ratings(teams=working_df["Team"].astype(str).tolist())
+    rating_df = ratings_df.copy() if ratings_df is not None else fetch_latest_team_ratings(teams=working_df["Team"].astype(str).tolist())
+    if not rating_df.empty:
+        rating_df["team_name"] = rating_df["team_name"].astype(str)
+        rating_df["rating_value"] = pd.to_numeric(rating_df["rating_value"], errors="coerce")
+        rating_df["rating_date"] = pd.to_datetime(rating_df["rating_date"], errors="coerce")
+        rating_df = rating_df.dropna(subset=["team_name", "rating_value"])
+        rating_df = rating_df.sort_values(["team_name", "rating_date"], ascending=[True, False])
+        rating_df = rating_df.drop_duplicates(subset=["team_name"], keep="first").reset_index(drop=True)
+        rating_df = rating_df[rating_df["team_name"].isin(working_df["Team"].astype(str).tolist())].reset_index(drop=True)
 
     if rating_df.empty:
         enriched_df = working_df.copy()

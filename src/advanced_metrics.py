@@ -5,7 +5,7 @@ from typing import Any
 import pandas as pd
 
 from src.analytics import RESULT_LABELS, build_standings, get_teams, prepare_matches_dataframe
-from src.ratings import fetch_latest_team_ratings
+from src.ratings import enrich_standings_with_ratings, fetch_latest_team_ratings
 
 
 DEFAULT_RECENT_MATCHES = 5
@@ -238,6 +238,8 @@ def compute_team_base_stats(df: pd.DataFrame, ratings_df: pd.DataFrame | None = 
     if not ratings_df.empty:
         ratings_df["team_name"] = ratings_df["team_name"].astype(str)
 
+    enriched_standings = enrich_standings_with_ratings(standings, ratings_df=ratings_df)
+
     rating_map = {
         str(row["team_name"]): {
             "rating_value": _safe_float(row.get("rating_value")),
@@ -389,6 +391,11 @@ def compute_team_base_stats(df: pd.DataFrame, ratings_df: pd.DataFrame | None = 
     base_stats["schedule_strength_note"] = base_stats["schedule_strength_source"].map(source_notes).fillna(
         source_notes["non disponibile"]
     )
+    base_stats.attrs["prepared_df"] = prepared_df
+    base_stats.attrs["standings"] = standings
+    base_stats.attrs["enriched_standings"] = enriched_standings
+    base_stats.attrs["team_logs"] = team_logs
+    base_stats.attrs["ratings_df"] = ratings_df
     base_stats.attrs["schedule_strength_source"] = schedule_source
     return base_stats
 
@@ -663,5 +670,8 @@ def build_advanced_team_metrics(df: pd.DataFrame, ratings_df: pd.DataFrame | Non
     metrics_df = metrics_df.sort_values(["position", "points", "team"], ascending=[True, False, True]).reset_index(
         drop=True
     )
+    for attr_name in ["prepared_df", "standings", "enriched_standings", "team_logs", "ratings_df"]:
+        if attr_name in base_stats.attrs:
+            metrics_df.attrs[attr_name] = base_stats.attrs[attr_name]
     metrics_df.attrs["schedule_strength_source"] = base_stats.attrs.get("schedule_strength_source", "non disponibile")
     return metrics_df

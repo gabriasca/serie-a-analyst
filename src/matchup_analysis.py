@@ -8,7 +8,7 @@ from src.advanced_metrics import build_advanced_team_metrics, get_team_advanced_
 from src.analytics import get_teams, prepare_matches_dataframe
 from src.context_engine import build_context_adjusted_edge
 from src.predictor import predict_match
-from src.team_profiles import build_team_profile
+from src.team_profiles import build_team_profile_context, build_team_profile_with_ratings
 
 
 METRIC_SPECS = [
@@ -549,8 +549,25 @@ def build_matchup_analysis(
     home_metrics = get_team_advanced_metrics(advanced_df, home_team) or {}
     away_metrics = get_team_advanced_metrics(advanced_df, away_team) or {}
 
-    home_profile = build_team_profile(prepared_df, home_team)
-    away_profile = build_team_profile(prepared_df, away_team)
+    profile_context = build_team_profile_context(
+        prepared_df,
+        ratings_df=ratings_df,
+        advanced_metrics_df=advanced_df,
+    )
+    home_profile = build_team_profile_with_ratings(
+        prepared_df,
+        home_team,
+        ratings_df=ratings_df,
+        advanced_metrics_df=advanced_df,
+        context=profile_context,
+    )
+    away_profile = build_team_profile_with_ratings(
+        prepared_df,
+        away_team,
+        ratings_df=ratings_df,
+        advanced_metrics_df=advanced_df,
+        context=profile_context,
+    )
     if not home_profile.get("ok") or not away_profile.get("ok"):
         return {"ok": False, "message": "Dati insufficienti per costruire un profilo affidabile di entrambe le squadre."}
 

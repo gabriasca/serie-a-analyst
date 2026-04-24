@@ -202,14 +202,34 @@ def _bucket_sentence_label(bucket_row: dict[str, Any]) -> str:
     return label[3:] if label.startswith("vs ") else label
 
 
-def _build_profile_context(df: pd.DataFrame) -> dict[str, Any]:
-    prepared_df = prepare_matches_dataframe(df)
-    standings = build_standings(prepared_df)
-    enriched_standings = enrich_standings_with_ratings(standings)
+def _build_profile_context(
+    df: pd.DataFrame,
+    ratings_df: pd.DataFrame | None = None,
+    advanced_metrics_df: pd.DataFrame | None = None,
+) -> dict[str, Any]:
+    prepared_df_attr = advanced_metrics_df.attrs.get("prepared_df") if advanced_metrics_df is not None else None
+    standings_attr = advanced_metrics_df.attrs.get("standings") if advanced_metrics_df is not None else None
+    enriched_attr = advanced_metrics_df.attrs.get("enriched_standings") if advanced_metrics_df is not None else None
+    team_logs_attr = advanced_metrics_df.attrs.get("team_logs") if advanced_metrics_df is not None else None
+
+    prepared_df = prepared_df_attr.copy() if isinstance(prepared_df_attr, pd.DataFrame) else prepare_matches_dataframe(df)
+    standings = standings_attr.copy() if isinstance(standings_attr, pd.DataFrame) else build_standings(prepared_df)
+    if isinstance(enriched_attr, pd.DataFrame):
+        enriched_standings = enriched_attr.copy()
+    else:
+        enriched_standings = enrich_standings_with_ratings(standings, ratings_df=ratings_df)
     teams = get_teams(prepared_df)
-    team_logs = {team: _build_team_matches(prepared_df, team) for team in teams}
+    if isinstance(team_logs_attr, dict):
+        team_logs = {
+            str(team_name): team_df.copy() if isinstance(team_df, pd.DataFrame) else pd.DataFrame()
+            for team_name, team_df in team_logs_attr.items()
+        }
+    else:
+        team_logs = {team: _build_team_matches(prepared_df, team) for team in teams}
     baselines = _compute_league_baselines(team_logs)
     bucket_map, bucket_teams, bucket_source = build_strength_bucket_map(enriched_standings)
+    if advanced_metrics_df is None:
+        advanced_metrics_df = build_advanced_team_metrics(prepared_df, ratings_df=ratings_df)
     return {
         "prepared_df": prepared_df,
         "teams": teams,
@@ -220,6 +240,7 @@ def _build_profile_context(df: pd.DataFrame) -> dict[str, Any]:
         "bucket_map": bucket_map,
         "bucket_teams": bucket_teams,
         "bucket_source": bucket_source,
+        "advanced_metrics_df": advanced_metrics_df,
     }
 
 
@@ -662,8 +683,8 @@ def build_team_profile_summary(profile: dict[str, Any]) -> str:
     return "\n".join(lines[:11])
 
 
-def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
-    context = _build_profile_context(df)
+def _build_team_profile_from_context(context: dict[str, Any], team: str) -> dict[str, Any]:
+    prepared_df = context.get("prepared_df", pd.DataFrame())
     team_df = context["team_logs"].get(team, pd.DataFrame())
 
     if team_df.empty:
@@ -696,11 +717,11 @@ def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
         "ppm": round(int(row["Pts"]) / max(int(row["GP"]), 1), 2),
     }
 
-    offensive = compute_offensive_profile(df, team, context=context)
-    defensive = compute_defensive_profile(df, team, context=context)
-    home_away = compute_home_away_identity(df, team, context=context)
-    recent = compute_recent_identity(df, team, last_n=5, context=context)
-    vs_strength_buckets = compute_vs_strength_buckets(df, team, context=context)
+    offensive = compute_offensive_profile(prepared_df, team, context=context)
+    defensive = compute_defensive_profile(prepared_df, team, context=context)
+    home_away = compute_home_away_identity(prepared_df, team, context=context)
+    recent = compute_recent_identity(prepared_df, team, last_n=5, context=context)
+    vs_strength_buckets = compute_vs_strength_buckets(prepared_df, team, context=context)
     indicators = {
         "indice_pericolosita_offensiva": offensive["indice_pericolosita_offensiva"],
         "indice_solidita_difensiva": defensive["indice_solidita_difensiva"],
@@ -720,7 +741,7 @@ def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
         "strength_band": row.get("Fascia forza") if pd.notna(row.get("Fascia forza")) else None,
         "rating_rank": int(row.get("Elo Rank")) if pd.notna(row.get("Elo Rank")) else None,
     }
-    advanced_metrics = get_team_advanced_metrics(build_advanced_team_metrics(df), team) or {}
+    advanced_metrics = get_team_advanced_metrics(context.get("advanced_metrics_df", pd.DataFrame()), team) or {}
 
     profile = {
         "ok": True,
@@ -743,3 +764,28 @@ def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
     profile.update(strength_weakness)
     profile["summary"] = build_team_profile_summary(profile)
     return profile
+
+
+def build_team_profile_context(
+    df: pd.DataFrame,
+    ratings_df: pd.DataFrame | None = None,
+    advanced_metrics_df: pd.DataFrame | None = None,
+) -> dict[str, Any]:
+    return _build_profile_context(df, ratings_df=ratings_df, advanced_metrics_df=advanced_metrics_df)
+
+
+def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
+    context = _build_profile_context(df)
+    return _build_team_profile_from_context(context, team)
+
+
+def build_team_profile_with_ratings(
+    df: pd.DataFrame,
+    team: str,
+    ratings_df: pd.DataFrame | None = None,
+    advanced_metrics_df: pd.DataFrame | None = None,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if context is None:
+        context = _build_profile_context(df, ratings_df=ratings_df, advanced_metrics_df=advanced_metrics_df)
+    return _build_team_profile_from_context(context, team)
