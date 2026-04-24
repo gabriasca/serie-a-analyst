@@ -111,10 +111,12 @@ else:
 
 if review:
     backtest_df = review["backtest_df"]
+    ratings_audit = review.get("ratings_audit", {})
     general_review = review["general_review"]
     diagnostic_tables = review["diagnostic_tables"]
     bucket_review = review["bucket_review"]
     factor_review = review["factor_review"]
+    calibration_guidance = review.get("calibration_guidance", {})
     conclusions = review["conclusions"]
 
     if int(general_review.get("matches_analyzed", 0) or 0) < 20:
@@ -202,9 +204,38 @@ if review:
 
     st.subheader("Valutazione fattori")
     if isinstance(factor_review, pd.DataFrame) and not factor_review.empty:
-        _safe_dataframe(factor_review)
+        factor_review_display = factor_review.drop(
+            columns=[column for column in ["factor_key", "use_for_calibration", "sort_priority"] if column in factor_review.columns],
+            errors="ignore",
+        )
+        _safe_dataframe(factor_review_display)
     else:
         st.caption("Nessuna valutazione fattori disponibile con i dati correnti.")
+
+    st.subheader("Indicazioni di calibrazione")
+    if ratings_audit:
+        st.caption(
+            f"Audit Elo: {ratings_audit.get('status', 'n/d')}. "
+            f"{ratings_audit.get('note', '')}"
+        )
+
+    guidance_col1, guidance_col2 = st.columns(2)
+    with guidance_col1:
+        st.markdown("### Fattori da valorizzare")
+        _render_bullets(calibration_guidance.get("factors_to_value", []))
+        st.markdown("### Metriche promettenti")
+        _render_bullets(calibration_guidance.get("promising_metrics", []))
+
+    with guidance_col2:
+        st.markdown("### Fattori da ridurre")
+        _render_bullets(calibration_guidance.get("factors_to_reduce", []))
+        st.markdown("### Metriche da rivedere")
+        _render_bullets(calibration_guidance.get("metrics_to_review", []))
+
+    sample_warnings = calibration_guidance.get("sample_warnings", [])
+    if sample_warnings:
+        st.markdown("### Avvisi campioni")
+        _render_bullets(sample_warnings)
 
     st.subheader("Conclusioni automatiche")
     _render_bullets(conclusions)

@@ -179,6 +179,23 @@ Limiti:
 - il rating Elo e solo informativo
 - non trasforma mai il dato statistico in una certezza
 
+## Model Review e calibrazione context engine
+
+La pagina `Model Review` esegue un backtest storico partita per partita usando solo i dati disponibili prima di ogni match.
+
+Serve a verificare se:
+
+- `adjusted_edge` migliora davvero la lettura del `base_edge`
+- `draw_risk` e `upset_risk` separano partite utili da partite piu aperte
+- `confidence` distingue davvero i contesti piu coerenti da quelli piu fragili
+- i fattori del `context_engine` stanno pesando nel modo giusto
+
+Nota importante sul rating Elo:
+
+- se il seed Elo disponibile e solo uno snapshot recente e non uno storico pre-match, nel `Model Review` viene trattato come layer informativo
+- in quel caso il factor review lo segnala come `informativo / non usato per calibrazione storica`
+- questo evita di scambiare per "fattore neutro" un dato che in realta non era disponibile storicamente nel backtest
+
 ## Limiti dell'MVP
 
 - non usa API esterne

@@ -5,6 +5,17 @@ from typing import Any
 import pandas as pd
 
 
+FACTOR_BASE_WEIGHTS = {
+    "table": 1.18,
+    "elo": 0.9,
+    "predictor": 0.72,
+    "recent_form": 0.98,
+    "home_away": 1.12,
+    "matchup": 1.16,
+    "bucket_performance": 1.1,
+}
+
+
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))
 
@@ -78,6 +89,33 @@ def _factor_note(feature_name: str, factor_data: dict[str, Any], weighted_impact
     return factor_data.get("note", "Fattore contestuale considerato nel calcolo.")
 
 
+def _factor_base_weight(feature_name: str) -> float:
+    return float(FACTOR_BASE_WEIGHTS.get(feature_name, 1.0))
+
+
+def _active_context_factors(weighted_factors: list[dict[str, Any]], threshold: float = 1.0) -> list[dict[str, Any]]:
+    return [
+        factor
+        for factor in weighted_factors
+        if factor.get("factor") != "stakes"
+        and factor.get("available", True)
+        and abs(float(factor.get("weighted_impact", 0.0) or 0.0)) >= threshold
+    ]
+
+
+def _compute_factor_coherence(weighted_factors: list[dict[str, Any]], dominant_sign: int) -> float:
+    active = _active_context_factors(weighted_factors, threshold=1.0)
+    if not active:
+        return 0.35
+    if dominant_sign == 0:
+        return 0.45
+
+    aligned = sum(1 for factor in active if _sign(float(factor.get("weighted_impact", 0.0) or 0.0)) == dominant_sign)
+    conflicting = sum(1 for factor in active if _sign(float(factor.get("weighted_impact", 0.0) or 0.0)) == -dominant_sign)
+    raw_score = (aligned - conflicting * 0.35) / max(len(active), 1)
+    return round(_clamp(0.45 + raw_score * 0.55, 0.0, 1.0), 2)
+
+
 def compute_feature_reliability(feature_name: str, factor_data: dict[str, Any]) -> float:
     if not factor_data.get("available", True):
         return 0.0
@@ -87,22 +125,22 @@ def compute_feature_reliability(feature_name: str, factor_data: dict[str, Any]) 
     bucket_matches = int(factor_data.get("bucket_matches", 0) or 0)
 
     if feature_name == "predictor":
-        return 0.92 if factor_data.get("predictor_available") else 0.0
+        return 0.78 if factor_data.get("predictor_available") else 0.0
     if feature_name == "elo":
         if factor_data.get("both_available"):
-            return 0.90
+            return 0.82
         return 0.40 if factor_data.get("one_available") else 0.0
     if feature_name == "recent_form":
-        return round(_clamp(0.45 + (recent_matches / 5.0) * 0.5, 0.45, 0.95), 2)
+        return round(_clamp(0.44 + (recent_matches / 5.0) * 0.40, 0.44, 0.86), 2)
     if feature_name == "home_away":
-        return round(_clamp(0.55 + (min_matches / 18.0) * 0.35, 0.55, 0.9), 2)
+        return round(_clamp(0.60 + (min_matches / 18.0) * 0.28, 0.60, 0.92), 2)
     if feature_name == "matchup":
         metric_coverage = float(factor_data.get("metric_coverage", 0.0) or 0.0)
-        return round(_clamp(0.45 + metric_coverage * 0.35 + (min_matches / 18.0) * 0.2, 0.4, 0.95), 2)
+        return round(_clamp(0.52 + metric_coverage * 0.28 + (min_matches / 18.0) * 0.16, 0.46, 0.92), 2)
     if feature_name == "bucket_performance":
-        return round(_clamp(0.30 + (bucket_matches / 5.0) * 0.45, 0.0, 0.85), 2)
+        return round(_clamp(0.38 + (bucket_matches / 5.0) * 0.42, 0.0, 0.88), 2)
     if feature_name == "table":
-        return round(_clamp(0.55 + (min_matches / 18.0) * 0.3, 0.55, 0.9), 2)
+        return round(_clamp(0.62 + (min_matches / 18.0) * 0.28, 0.62, 0.93), 2)
     return round(_clamp(0.5 + (min_matches / 20.0) * 0.3, 0.4, 0.9), 2)
 
 
@@ -118,39 +156,39 @@ def compute_context_relevance(
 
     relevance = 0.5
     if feature_name == "predictor":
-        relevance = 0.6 + min(gap / 20.0, 0.25)
+        relevance = 0.44 + min(gap / 24.0, 0.15)
         if float(factor_data.get("draw_probability", 0.0) or 0.0) > 0.30:
             relevance -= 0.05
     elif feature_name == "elo":
-        relevance = 0.45
+        relevance = 0.40
         if gap >= 100:
-            relevance += 0.20
+            relevance += 0.16
         elif gap >= 50:
-            relevance += 0.10
+            relevance += 0.08
         if factor_data.get("conflicts_with_recent"):
             relevance -= 0.15
     elif feature_name == "recent_form":
-        relevance = 0.4 + (0.20 if gap >= 15 else 0.10 if gap >= 8 else 0.0)
+        relevance = 0.42 + (0.15 if gap >= 15 else 0.08 if gap >= 8 else 0.0)
         if not factor_data.get("predictor_available"):
-            relevance += 0.10
+            relevance += 0.08
     elif feature_name == "home_away":
-        relevance = 0.4 + (0.15 if gap >= 0.50 else 0.05 if gap >= 0.25 else 0.0)
+        relevance = 0.48 + (0.18 if gap >= 0.50 else 0.08 if gap >= 0.25 else 0.0)
         if factor_data.get("home_dependency_high") or factor_data.get("away_dependency_high"):
             relevance += 0.10
     elif feature_name == "matchup":
-        relevance = 0.55 + (0.20 if gap >= 18 else 0.10 if gap >= 10 else 0.0)
+        relevance = 0.62 + (0.18 if gap >= 18 else 0.10 if gap >= 10 else 0.0)
         if int(factor_data.get("mismatch_count", 0) or 0) >= 2:
-            relevance += 0.10
+            relevance += 0.08
     elif feature_name == "bucket_performance":
-        relevance = 0.45 + (0.15 if opponent_bucket in {"top", "bottom"} else 0.05)
+        relevance = 0.52 + (0.14 if opponent_bucket in {"top", "bottom"} else 0.05)
         if gap >= 0.50:
             relevance += 0.10
     elif feature_name == "table":
-        relevance = 0.35
+        relevance = 0.48
         if int(factor_data.get("position_gap", 99) or 99) <= 3 or float(factor_data.get("points_gap", 99.0) or 99.0) <= 3.0:
-            relevance += 0.15
+            relevance += 0.12
         if stakes_pressure_index >= 70:
-            relevance += 0.10
+            relevance += 0.05
 
     return round(_clamp(relevance, 0.2, 1.2), 2)
 
@@ -169,36 +207,36 @@ def compute_matchup_multiplier(
     multiplier = 1.0
     if feature_name == "predictor":
         if factor_sign and factor_sign == style_sign:
-            multiplier = 1.10
+            multiplier = 1.04
         elif factor_sign and style_sign and factor_sign != style_sign:
-            multiplier = 0.92
+            multiplier = 0.88
     elif feature_name == "elo":
         if factor_data.get("conflicts_with_recent"):
-            multiplier = 0.86
+            multiplier = 0.82
         elif factor_sign and factor_sign == style_sign:
-            multiplier = 1.08
+            multiplier = 1.02
     elif feature_name == "recent_form":
         if factor_sign and factor_sign == style_sign:
-            multiplier = 1.10
+            multiplier = 1.06
         elif predictor_context.get("available") and factor_sign and factor_sign != _sign(float(predictor_context.get("home_probability", 0.0) - predictor_context.get("away_probability", 0.0))):
-            multiplier = 0.93
+            multiplier = 0.95
     elif feature_name == "home_away":
         if float(factor_data.get("gap", 0.0) or 0.0) > 0 and factor_data.get("home_dependency_high"):
-            multiplier = 1.12
+            multiplier = 1.14
         elif float(factor_data.get("gap", 0.0) or 0.0) < 0:
-            multiplier = 1.05
+            multiplier = 1.06
         else:
-            multiplier = 0.96
+            multiplier = 1.0
     elif feature_name == "matchup":
         gap = abs(float(factor_data.get("gap", 0.0) or 0.0))
-        multiplier = 1.15 if gap >= 20 else 1.06 if gap >= 10 else 0.96
+        multiplier = 1.18 if gap >= 20 else 1.10 if gap >= 10 else 1.0
     elif feature_name == "bucket_performance":
-        multiplier = 1.08 if int(factor_data.get("bucket_matches", 0) or 0) >= 4 else 0.92
+        multiplier = 1.12 if int(factor_data.get("bucket_matches", 0) or 0) >= 4 else 0.96
     elif feature_name == "table":
         if predictor_context.get("available") and factor_sign and factor_sign == _sign(float(predictor_context.get("home_probability", 0.0) - predictor_context.get("away_probability", 0.0))):
-            multiplier = 1.05
+            multiplier = 1.08
         else:
-            multiplier = 0.97
+            multiplier = 1.0
 
     return round(_clamp(multiplier, 0.8, 1.2), 2)
 
@@ -214,33 +252,33 @@ def compute_stakes_pressure_index(home_profile: dict[str, Any], away_profile: di
     away_points = int(away_general.get("points", 0) or 0)
     min_matches = min(int(home_general.get("matches", 0) or 0), int(away_general.get("matches", 0) or 0))
 
-    pressure = 35.0
+    pressure = 28.0
     position_gap = abs(home_position - away_position)
     points_gap = abs(home_points - away_points)
     bottom_cutoff = max(team_count - 5, 1)
 
     if home_position <= 6 and away_position <= 6:
-        pressure += 20.0
+        pressure += 14.0
     if home_position >= bottom_cutoff and away_position >= bottom_cutoff:
-        pressure += 20.0
+        pressure += 14.0
     if max(home_position, away_position) <= 8 and position_gap <= 3:
-        pressure += 8.0
-    if position_gap <= 3:
-        pressure += 10.0
-    elif position_gap <= 6:
         pressure += 5.0
-    if points_gap <= 3:
-        pressure += 12.0
-    elif points_gap <= 6:
-        pressure += 6.0
-    if min_matches >= 30:
-        pressure += 12.0
-    elif min_matches >= 20:
+    if position_gap <= 3:
         pressure += 8.0
-    elif min_matches >= 10:
+    elif position_gap <= 6:
         pressure += 4.0
+    if points_gap <= 3:
+        pressure += 8.0
+    elif points_gap <= 6:
+        pressure += 5.0
+    if min_matches >= 30:
+        pressure += 9.0
+    elif min_matches >= 20:
+        pressure += 6.0
+    elif min_matches >= 10:
+        pressure += 3.0
 
-    return round(_clamp(pressure, 15.0, 95.0), 1)
+    return round(_clamp(pressure, 12.0, 88.0), 1)
 
 
 def compute_uncertainty_index(
@@ -249,9 +287,10 @@ def compute_uncertainty_index(
     stakes_pressure_index: float = 50.0,
     adjusted_edge: float = 0.0,
     draw_risk: float = 35.0,
+    coherence_score: float = 0.5,
 ) -> float:
     predictor_context = predictor_context or {}
-    usable = [factor for factor in weighted_factors if factor.get("factor") != "stakes"]
+    usable = [factor for factor in weighted_factors if factor.get("factor") != "stakes" and factor.get("available", True)]
     if usable:
         support_scores = [
             _clamp(
@@ -275,18 +314,20 @@ def compute_uncertainty_index(
 
     balance_component = _clamp(1.0 - min(abs(adjusted_edge) / 14.0, 1.0), 0.0, 1.0)
     draw_component = _clamp(draw_risk / 100.0, 0.0, 1.0)
-    pressure_component = _clamp((stakes_pressure_index - 55.0) / 40.0, 0.0, 1.0)
+    pressure_component = _clamp((stakes_pressure_index - 60.0) / 35.0, 0.0, 1.0)
+    coherence_component = _clamp(1.0 - coherence_score, 0.0, 1.0)
     missing_predictor_component = 0.15 if not predictor_context.get("available") else 0.0
 
     uncertainty = (
-        (1.0 - average_support) * 42.0
+        (1.0 - average_support) * 36.0
         + balance_component * 24.0
-        + draw_component * 18.0
-        + conflict_component * 10.0
-        + pressure_component * 6.0
-        + missing_predictor_component * 10.0
+        + draw_component * 16.0
+        + conflict_component * 12.0
+        + coherence_component * 10.0
+        + pressure_component * 4.0
+        + missing_predictor_component * 8.0
     )
-    return round(_clamp(uncertainty, 8.0, 92.0), 1)
+    return round(_clamp(uncertainty, 8.0, 90.0), 1)
 
 
 def explain_context_adjustments(context_result: dict[str, Any]) -> str:
@@ -430,7 +471,7 @@ def build_context_adjusted_edge(
         {
             "factor": "elo",
             "label": "Rating Elo",
-            "signal": _scaled_signal(elo_gap, divisor=35.0, cap=5.0),
+            "signal": _scaled_signal(elo_gap, divisor=40.0, cap=5.0),
             "available": elo_gap is not None,
             "both_available": home_elo is not None and away_elo is not None,
             "one_available": (home_elo is not None) != (away_elo is not None),
@@ -442,7 +483,7 @@ def build_context_adjusted_edge(
         {
             "factor": "predictor",
             "label": "Predictor esistente",
-            "signal": _scaled_signal(predictor_gap, divisor=4.5, cap=6.0),
+            "signal": _scaled_signal(predictor_gap, divisor=5.5, cap=5.0),
             "available": predictor_available,
             "predictor_available": predictor_available,
             "gap": abs(predictor_gap) if predictor_gap is not None else 0.0,
@@ -460,7 +501,7 @@ def build_context_adjusted_edge(
         {
             "factor": "home_away",
             "label": "Contesto casa/fuori",
-            "signal": _scaled_signal(home_context_gap, divisor=0.45, cap=5.0),
+            "signal": _scaled_signal(home_context_gap, divisor=0.40, cap=5.0),
             "available": True,
             "min_matches": min_matches,
             "gap": home_context_gap,
@@ -470,7 +511,7 @@ def build_context_adjusted_edge(
         {
             "factor": "matchup",
             "label": "Mismatch attacco vs difesa",
-            "signal": _scaled_signal(matchup_gap, divisor=4.5, cap=6.0),
+            "signal": _scaled_signal(matchup_gap, divisor=4.25, cap=6.0),
             "available": matchup_gap is not None,
             "min_matches": min_matches,
             "gap": abs(matchup_gap) if matchup_gap is not None else 0.0,
@@ -480,7 +521,7 @@ def build_context_adjusted_edge(
         {
             "factor": "bucket_performance",
             "label": "Rendimento vs fascia avversaria",
-            "signal": _scaled_signal(bucket_gap, divisor=0.35, cap=4.0),
+            "signal": _scaled_signal(bucket_gap, divisor=0.30, cap=4.0),
             "available": bucket_gap is not None and bucket_matches > 0,
             "bucket_matches": bucket_matches,
             "gap": abs(bucket_gap) if bucket_gap is not None else 0.0,
@@ -493,24 +534,28 @@ def build_context_adjusted_edge(
     adjusted_edge_pre_stakes = 0.0
 
     for factor_data in factor_inputs:
+        factor_name = str(factor_data["factor"])
         signal = float(factor_data.get("signal", 0.0) or 0.0)
         base_edge += signal
 
-        reliability = compute_feature_reliability(str(factor_data["factor"]), factor_data)
-        relevance = compute_context_relevance(str(factor_data["factor"]), factor_data, stakes_pressure_index=stakes_pressure)
+        factor_weight = _factor_base_weight(factor_name)
+        reliability = compute_feature_reliability(factor_name, factor_data)
+        relevance = compute_context_relevance(factor_name, factor_data, stakes_pressure_index=stakes_pressure)
         multiplier = compute_matchup_multiplier(
-            str(factor_data["factor"]),
+            factor_name,
             factor_data,
             style_advantage=style_advantage,
             predictor_context=predictor_context,
         )
-        weighted_impact = round(signal * reliability * relevance * multiplier, 2)
+        weighted_impact = round(signal * factor_weight * reliability * relevance * multiplier, 2)
         adjusted_edge_pre_stakes += weighted_impact
 
         weighted_factors.append(
             {
-                "factor": factor_data["factor"],
+                "factor": factor_name,
                 "label": factor_data["label"],
+                "available": bool(factor_data.get("available", True)),
+                "base_weight": round(factor_weight, 2),
                 "signal": round(signal, 2),
                 "reliability": round(reliability, 2),
                 "context_relevance": round(relevance, 2),
@@ -522,10 +567,10 @@ def build_context_adjusted_edge(
 
     stakes_adjustment = 0.0
     if abs(adjusted_edge_pre_stakes) > 0.25:
-        if stakes_pressure >= 75 and abs(adjusted_edge_pre_stakes) < 8.0:
-            stakes_adjustment = round(-_sign(adjusted_edge_pre_stakes) * min(1.8, (stakes_pressure - 70.0) / 12.0), 2)
-        elif stakes_pressure <= 35 and abs(adjusted_edge_pre_stakes) >= 8.0:
-            stakes_adjustment = round(_sign(adjusted_edge_pre_stakes) * 0.6, 2)
+        if stakes_pressure >= 80 and abs(adjusted_edge_pre_stakes) < 7.0:
+            stakes_adjustment = round(-_sign(adjusted_edge_pre_stakes) * min(1.0, (stakes_pressure - 76.0) / 14.0), 2)
+        elif stakes_pressure <= 28 and abs(adjusted_edge_pre_stakes) >= 10.0:
+            stakes_adjustment = round(_sign(adjusted_edge_pre_stakes) * 0.3, 2)
 
     adjusted_edge = round(adjusted_edge_pre_stakes + stakes_adjustment, 2)
 
@@ -534,14 +579,19 @@ def build_context_adjusted_edge(
             {
                 "factor": "stakes",
                 "label": "Pressione / stakes",
+                "available": True,
+                "base_weight": 0.4,
                 "signal": 0.0,
-                "reliability": 1.0,
-                "context_relevance": round(_clamp(stakes_pressure / 100.0, 0.2, 1.0), 2),
+                "reliability": 0.55,
+                "context_relevance": round(_clamp(stakes_pressure / 120.0, 0.15, 0.7), 2),
                 "matchup_multiplier": 1.0,
                 "weighted_impact": stakes_adjustment,
                 "note": _factor_note("stakes", {"note": ""}, stakes_adjustment, home_team, away_team),
             }
         )
+
+    dominant_sign = _sign(adjusted_edge if abs(adjusted_edge) >= 0.35 else base_edge)
+    coherence_score = _compute_factor_coherence(weighted_factors, dominant_sign)
 
     draw_risk = 34.0
     if predictor_available:
@@ -560,50 +610,134 @@ def build_context_adjusted_edge(
         draw_risk += 5.0
     if stakes_pressure >= 70.0 and abs(adjusted_edge) < 8.0:
         draw_risk += 6.0
+    if abs(home_recent_ppm - away_recent_ppm) < 0.25 and abs(recent_gap or 0.0) < 8.0:
+        draw_risk += 2.0
+    if coherence_score < 0.42 and abs(adjusted_edge) < 6.0:
+        draw_risk += 3.0
+    elif coherence_score >= 0.72 and abs(adjusted_edge) >= 8.0:
+        draw_risk -= 2.0
     if abs(adjusted_edge) > 12.0:
         draw_risk -= 8.0
     draw_risk = round(_clamp(draw_risk, 8.0, 82.0), 1)
 
-    uncertainty_index = compute_uncertainty_index(
+    preliminary_uncertainty = compute_uncertainty_index(
         weighted_factors,
         predictor_context=predictor_context,
         stakes_pressure_index=stakes_pressure,
         adjusted_edge=adjusted_edge,
         draw_risk=draw_risk,
+        coherence_score=coherence_score,
     )
+    provisional_confidence = round(_clamp(100.0 - preliminary_uncertainty, 8.0, 92.0), 1)
 
-    favorite_sign = _sign(adjusted_edge)
-    upset_risk = 22.0
+    favorite_sign = _sign(adjusted_edge) if abs(adjusted_edge) >= 2.0 else 0
+    upset_risk = 18.0
     if favorite_sign == 0:
-        upset_risk = 44.0
+        upset_risk = 38.0 + max(draw_risk - 45.0, 0.0) * 0.12
     else:
-        if abs(adjusted_edge) < 6.0:
-            upset_risk += 12.0
-        elif abs(adjusted_edge) < 10.0:
+        favorite_advanced = home_advanced if favorite_sign > 0 else away_advanced
+        underdog_advanced = away_advanced if favorite_sign > 0 else home_advanced
+        favorite_probability = (
+            float(predictor_context.get("home_probability", 0.0) or 0.0)
+            if favorite_sign > 0
+            else float(predictor_context.get("away_probability", 0.0) or 0.0)
+        )
+        underdog_recent_gap = (
+            ((_safe_float(away_advanced.get("recent_momentum_index")) or 0.0) - (_safe_float(home_advanced.get("recent_momentum_index")) or 0.0))
+            if favorite_sign > 0
+            else ((_safe_float(home_advanced.get("recent_momentum_index")) or 0.0) - (_safe_float(away_advanced.get("recent_momentum_index")) or 0.0))
+        )
+        underdog_matchup_edge = away_attack_vs_home_defense if favorite_sign > 0 else home_attack_vs_away_defense
+        favorite_defensive_risk = _safe_float(favorite_advanced.get("defensive_risk_index")) or 50.0
+        favorite_defensive_solidity = _safe_float(favorite_advanced.get("defensive_solidity_index")) or 50.0
+        favorite_dependency = home_dependency if favorite_sign > 0 else away_dependency
+        edge_abs = abs(adjusted_edge)
+        active_factors = _active_context_factors(weighted_factors, threshold=1.0)
+        aligned_advantages = sum(
+            1 for factor in active_factors if _sign(float(factor.get("weighted_impact", 0.0) or 0.0)) == favorite_sign
+        )
+        conflicting_advantages = sum(
+            1 for factor in active_factors if _sign(float(factor.get("weighted_impact", 0.0) or 0.0)) == -favorite_sign
+        )
+
+        if edge_abs < 4.0:
+            upset_risk += 16.0
+        elif edge_abs < 7.0:
+            upset_risk += 11.0
+        elif edge_abs < 10.0:
             upset_risk += 6.0
+        elif edge_abs < 14.0:
+            upset_risk += 2.0
         else:
-            upset_risk -= 2.0
+            upset_risk -= 4.0
 
-        if favorite_sign > 0:
-            underdog_recent_gap = ((_safe_float(away_advanced.get("recent_momentum_index")) or 0.0) - (_safe_float(home_advanced.get("recent_momentum_index")) or 0.0))
-            if underdog_recent_gap > 10.0:
-                upset_risk += 10.0
-            if home_dependency >= 65.0:
-                upset_risk += 6.0
-            if predictor_available and float(predictor_context.get("home_probability", 0.0) or 0.0) < 0.45:
-                upset_risk += 6.0
-        else:
-            underdog_recent_gap = ((_safe_float(home_advanced.get("recent_momentum_index")) or 0.0) - (_safe_float(away_advanced.get("recent_momentum_index")) or 0.0))
-            if underdog_recent_gap > 10.0:
-                upset_risk += 10.0
-            if away_dependency >= 65.0:
-                upset_risk += 6.0
-            if predictor_available and float(predictor_context.get("away_probability", 0.0) or 0.0) < 0.45:
-                upset_risk += 6.0
+        if provisional_confidence < 35.0:
+            upset_risk += 14.0
+        elif provisional_confidence < 50.0:
+            upset_risk += 9.0
+        elif provisional_confidence < 65.0:
+            upset_risk += 5.0
+        elif provisional_confidence >= 78.0:
+            upset_risk -= 6.0
 
-        upset_risk += uncertainty_index * 0.18
+        if underdog_recent_gap > 15.0:
+            upset_risk += 10.0
+        elif underdog_recent_gap > 8.0:
+            upset_risk += 6.0
+        elif underdog_recent_gap < -10.0:
+            upset_risk -= 4.0
+
+        if underdog_matchup_edge is not None:
+            if underdog_matchup_edge > 15.0:
+                upset_risk += 10.0
+            elif underdog_matchup_edge > 8.0:
+                upset_risk += 6.0
+            elif underdog_matchup_edge < -8.0:
+                upset_risk -= 3.0
+
+        if favorite_defensive_risk >= 62.0:
+            upset_risk += 8.0
+        elif favorite_defensive_risk >= 55.0:
+            upset_risk += 4.0
+
+        if favorite_defensive_solidity <= 42.0:
+            upset_risk += 8.0
+        elif favorite_defensive_solidity <= 48.0:
+            upset_risk += 4.0
+
+        if favorite_dependency >= 72.0 and edge_abs < 10.0:
+            upset_risk += 4.0
+
+        if conflicting_advantages >= 2:
+            upset_risk += 5.0
+        if aligned_advantages >= 3 and conflicting_advantages == 0 and edge_abs >= 8.0 and coherence_score >= 0.72:
+            upset_risk -= 10.0
+        elif aligned_advantages >= 2 and coherence_score >= 0.60:
+            upset_risk -= 5.0
+
+        if predictor_available:
+            if favorite_probability < 0.48:
+                upset_risk += 4.0
+            elif favorite_probability > 0.58:
+                upset_risk -= 3.0
+
+        if draw_risk >= 60.0 and edge_abs < 8.0:
+            upset_risk += 3.0
+
+        upset_risk += preliminary_uncertainty * 0.10
 
     upset_risk = round(_clamp(upset_risk, 10.0, 85.0), 1)
+    uncertainty_index = round(
+        _clamp(
+            preliminary_uncertainty
+            + max(draw_risk - 55.0, 0.0) * 0.06
+            + max(upset_risk - 55.0, 0.0) * 0.08
+            - coherence_score * 3.0,
+            8.0,
+            92.0,
+        ),
+        1,
+    )
     confidence = round(_clamp(100.0 - uncertainty_index, 8.0, 92.0), 1)
 
     sorted_weighted_factors = sorted(
@@ -623,6 +757,7 @@ def build_context_adjusted_edge(
         "weighted_factors": sorted_weighted_factors,
         "stakes_pressure_index": round(stakes_pressure, 1),
         "uncertainty_index": uncertainty_index,
+        "coherence_score": round(coherence_score * 100.0, 1),
     }
     context_result["textual_explanation"] = explain_context_adjustments(context_result)
     return context_result

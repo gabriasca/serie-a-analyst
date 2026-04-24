@@ -84,6 +84,102 @@ def _build_ratings_snapshot(
     return snapshot_df
 
 
+def build_ratings_audit(
+    season_df: pd.DataFrame,
+    ratings_history_df: pd.DataFrame | None = None,
+) -> dict[str, Any]:
+    prepared_df = prepare_matches_dataframe(season_df)
+    audit = {
+        "available": False,
+        "historical_ready": False,
+        "unique_rating_dates": 0,
+        "earliest_rating_date": None,
+        "latest_rating_date": None,
+        "matches_with_both_ratings": 0,
+        "matches_with_partial_ratings": 0,
+        "pre_match_coverage_pct": 0.0,
+        "status": "assente",
+        "note": "Nessun rating Elo disponibile per il backtest storico.",
+    }
+    if prepared_df.empty:
+        audit["status"] = "stagione vuota"
+        audit["note"] = "La stagione selezionata non contiene partite utilizzabili per audit Elo."
+        return audit
+
+    ratings_history_df = ratings_history_df.copy() if ratings_history_df is not None else _load_ratings_history()
+    if ratings_history_df.empty:
+        return audit
+
+    teams = sorted(set(prepared_df["home_team"].astype(str).tolist()) | set(prepared_df["away_team"].astype(str).tolist()))
+    relevant_df = ratings_history_df.loc[ratings_history_df["team_name"].astype(str).isin(teams)].copy()
+    if relevant_df.empty:
+        audit["status"] = "fuori copertura"
+        audit["note"] = "Il layer Elo non copre le squadre presenti nella stagione analizzata."
+        return audit
+
+    relevant_df["rating_date"] = pd.to_datetime(relevant_df["rating_date"], errors="coerce")
+    relevant_df = relevant_df.dropna(subset=["rating_date"]).sort_values(["rating_date", "team_name"]).reset_index(drop=True)
+    if relevant_df.empty:
+        audit["status"] = "date non valide"
+        audit["note"] = "I rating Elo presenti non hanno date storiche utilizzabili."
+        return audit
+
+    audit["available"] = True
+    audit["unique_rating_dates"] = int(relevant_df["rating_date"].dt.normalize().nunique())
+    audit["earliest_rating_date"] = relevant_df["rating_date"].min().strftime("%Y-%m-%d")
+    audit["latest_rating_date"] = relevant_df["rating_date"].max().strftime("%Y-%m-%d")
+
+    rating_records = relevant_df.to_dict(orient="records")
+    match_records = prepared_df.sort_values(["match_date", "home_team", "away_team"]).to_dict(orient="records")
+    available_teams: set[str] = set()
+    rating_idx = 0
+    both_count = 0
+    partial_count = 0
+
+    for match in match_records:
+        match_date = pd.to_datetime(match.get("match_date"), errors="coerce")
+        while rating_idx < len(rating_records) and pd.to_datetime(rating_records[rating_idx]["rating_date"], errors="coerce") <= match_date:
+            team_name = str(rating_records[rating_idx].get("team_name") or "")
+            if team_name:
+                available_teams.add(team_name)
+            rating_idx += 1
+
+        home_team = str(match.get("home_team") or "")
+        away_team = str(match.get("away_team") or "")
+        available_count = int(home_team in available_teams) + int(away_team in available_teams)
+        if available_count == 2:
+            both_count += 1
+        elif available_count == 1:
+            partial_count += 1
+
+    total_matches = max(len(match_records), 1)
+    coverage_pct = round(both_count / total_matches * 100.0, 1)
+    audit["matches_with_both_ratings"] = both_count
+    audit["matches_with_partial_ratings"] = partial_count
+    audit["pre_match_coverage_pct"] = coverage_pct
+
+    historical_ready = audit["unique_rating_dates"] >= 3 and coverage_pct >= 25.0
+    audit["historical_ready"] = historical_ready
+
+    if both_count == 0:
+        audit["status"] = "informativo / non usato per calibrazione storica"
+        audit["note"] = (
+            "Il seed Elo attuale e uno snapshot successivo alle partite backtestate, "
+            "quindi nel review non entra come fattore pre-match."
+        )
+    elif not historical_ready:
+        audit["status"] = "copertura storica parziale"
+        audit["note"] = (
+            "Elo appare solo in una parte limitata del backtest: per ora lo trattiamo "
+            "con prudenza e non lo usiamo come base forte di calibrazione."
+        )
+    else:
+        audit["status"] = "storico utilizzabile"
+        audit["note"] = "La copertura Elo storica e sufficiente per entrare anche nella calibrazione del review."
+
+    return audit
+
+
 def _actual_outcome(row: pd.Series) -> tuple[str, int]:
     home_goals = int(row.get("home_goals", 0) or 0)
     away_goals = int(row.get("away_goals", 0) or 0)
@@ -323,6 +419,7 @@ def build_backtest_rows(
                     "matchup_multiplier": float(factor.get("matchup_multiplier", 1.0) or 1.0),
                     "weighted_impact": weighted_impact,
                     "impact_abs": abs(weighted_impact),
+                    "available": bool(factor.get("available", True)),
                     "actual_outcome": actual_outcome,
                     "actual_sign": actual_sign,
                     "help_label": _factor_help_label(weighted_impact, actual_sign),
@@ -464,32 +561,184 @@ def build_bucket_review(backtest_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     }
 
 
-def build_factor_review(factors_df: pd.DataFrame) -> pd.DataFrame:
+def build_factor_review(
+    factors_df: pd.DataFrame,
+    ratings_audit: dict[str, Any] | None = None,
+) -> pd.DataFrame:
     if factors_df.empty:
         return pd.DataFrame()
 
     rows: list[dict[str, Any]] = []
     total_matches = max(int(factors_df[["match_date", "home_team", "away_team"]].drop_duplicates().shape[0]), 1)
     for factor_name, factor_df in factors_df.groupby("factor"):
+        available_df = factor_df.loc[factor_df["available"].fillna(True)] if "available" in factor_df.columns else factor_df.copy()
+        available_matches = int(available_df[["match_date", "home_team", "away_team"]].drop_duplicates().shape[0]) if not available_df.empty else 0
+        use_for_calibration = True
+        calibration_status = "calibrabile"
+        calibration_note = ""
+
+        if factor_name == "elo" and ratings_audit and not ratings_audit.get("historical_ready", False):
+            use_for_calibration = False
+            calibration_status = str(ratings_audit.get("status") or "informativo")
+            calibration_note = str(ratings_audit.get("note") or "")
+        elif factor_name == "stakes":
+            calibration_status = "proxy prudente"
+            calibration_note = "Proxy sintetico di pressione partita: utile come contesto, ma da pesare poco."
+        elif available_matches == 0:
+            calibration_status = "non disponibile nel backtest"
+            calibration_note = "Il fattore non ha avuto dati pre-match sufficienti nelle partite analizzate."
+
         rows.append(
             {
+                "factor_key": factor_name,
+                "use_for_calibration": use_for_calibration,
+                "sort_priority": 1 if use_for_calibration else 0,
                 "Fattore": factor_df["label"].iloc[0],
-                "Presente in partite": int(len(factor_df)),
-                "Frequenza utilizzo %": round(float(factor_df["used_actively"].mean() * 100.0), 1),
-                "Direzione media": round(float(factor_df["weighted_impact"].mean()), 2),
-                "Impatto assoluto medio": round(float(factor_df["impact_abs"].mean()), 2),
-                "Aiuta": int((factor_df["help_label"] == "helped").sum()),
-                "Non aiuta": int((factor_df["help_label"] == "hurt").sum()),
-                "Help rate %": round(float((factor_df["help_label"] == "helped").mean() * 100.0), 1),
-                "Copertura match %": round(float(factor_df["match_date"].count() / total_matches * 100.0), 1),
+                "Disponibile in partite": available_matches,
+                "Disponibilita storica %": round(float(available_matches / total_matches * 100.0), 1),
+                "Frequenza utilizzo %": round(float(available_df["used_actively"].mean() * 100.0), 1) if not available_df.empty else 0.0,
+                "Direzione media": round(float(available_df["weighted_impact"].mean()), 2) if not available_df.empty else 0.0,
+                "Impatto assoluto medio": round(float(available_df["impact_abs"].mean()), 2) if not available_df.empty else 0.0,
+                "Aiuta": int((available_df["help_label"] == "helped").sum()) if not available_df.empty else 0,
+                "Non aiuta": int((available_df["help_label"] == "hurt").sum()) if not available_df.empty else 0,
+                "Help rate %": round(float((available_df["help_label"] == "helped").mean() * 100.0), 1) if not available_df.empty else 0.0,
+                "Stato calibrazione": calibration_status,
+                "Nota calibrazione": calibration_note,
             }
         )
 
     factor_review_df = pd.DataFrame(rows).sort_values(
-        ["Impatto assoluto medio", "Frequenza utilizzo %"],
-        ascending=[False, False],
+        ["sort_priority", "Impatto assoluto medio", "Frequenza utilizzo %"],
+        ascending=[False, False, False],
     ).reset_index(drop=True)
     return factor_review_df
+
+
+def build_calibration_guidance(
+    backtest_df: pd.DataFrame,
+    factor_review_df: pd.DataFrame,
+    general_review: dict[str, Any],
+    bucket_review: dict[str, pd.DataFrame],
+    ratings_audit: dict[str, Any] | None = None,
+) -> dict[str, list[str]]:
+    guidance = {
+        "factors_to_value": [],
+        "factors_to_reduce": [],
+        "promising_metrics": [],
+        "metrics_to_review": [],
+        "sample_warnings": [],
+    }
+    if backtest_df.empty:
+        guidance["metrics_to_review"].append("Dati insufficienti per generare indicazioni di calibrazione affidabili.")
+        return guidance
+
+    factor_rows = {}
+    if not factor_review_df.empty and "factor_key" in factor_review_df.columns:
+        factor_rows = {str(row["factor_key"]): row for row in factor_review_df.to_dict(orient="records")}
+
+    preferred_up = ["table", "home_away", "matchup", "bucket_performance"]
+    for factor_key in preferred_up:
+        row = factor_rows.get(factor_key)
+        if not row or not row.get("use_for_calibration", False):
+            continue
+        guidance["factors_to_value"].append(
+            f"{row['Fattore']}: impatto medio {row['Impatto assoluto medio']:.2f} e help rate {row['Help rate %']:.1f}%."
+        )
+
+    recent_row = factor_rows.get("recent_form")
+    if recent_row and recent_row.get("use_for_calibration", False):
+        guidance["promising_metrics"].append(
+            f"{recent_row['Fattore']}: utile nel backtest, ma da mantenere come segnale secondario."
+        )
+
+    predictor_row = factor_rows.get("predictor")
+    if predictor_row:
+        guidance["factors_to_reduce"].append(
+            "Predictor esistente come fattore contestuale: meglio usarlo come supporto leggero, non come driver dominante."
+        )
+
+    stakes_row = factor_rows.get("stakes")
+    if stakes_row:
+        guidance["factors_to_reduce"].append(
+            "Pressione / stakes: proxy ancora debole, da trattare con prudenza nel peso finale."
+        )
+
+    ratings_audit = ratings_audit or {}
+    if ratings_audit and not ratings_audit.get("historical_ready", False):
+        guidance["metrics_to_review"].append(
+            f"Rating Elo da verificare: {ratings_audit.get('note', 'copertura storica non sufficiente per calibrazione.')}"
+        )
+
+    overall_draw_rate = float((backtest_df["actual_outcome"] == "X").mean())
+    adjusted_mask = backtest_df["adjusted_favorite"] != "none"
+    overall_adjusted_non_win_rate = (
+        float(backtest_df.loc[adjusted_mask, "adjusted_favorite_win"].fillna(False).eq(False).mean())
+        if adjusted_mask.any()
+        else 0.0
+    )
+
+    base_total = int(general_review.get("base_favorite_non_loss_total", 0) or 0)
+    adjusted_total = int(general_review.get("adjusted_favorite_non_loss_total", 0) or 0)
+    base_rate = float(general_review.get("base_favorite_non_loss_hits", 0) or 0) / base_total if base_total else 0.0
+    adjusted_rate = float(general_review.get("adjusted_favorite_non_loss_hits", 0) or 0) / adjusted_total if adjusted_total else 0.0
+    if adjusted_rate > base_rate:
+        guidance["promising_metrics"].append(
+            f"Adjusted edge migliora il favorito base: {adjusted_rate * 100:.1f}% contro {base_rate * 100:.1f}% di non-sconfitta."
+        )
+
+    high_draw_total = int(general_review.get("high_draw_total", 0) or 0)
+    high_draw_hits = int(general_review.get("high_draw_hits", 0) or 0)
+    if high_draw_total:
+        high_draw_rate = high_draw_hits / high_draw_total
+        if high_draw_rate > overall_draw_rate:
+            guidance["promising_metrics"].append(
+                f"Draw risk promettente: il bucket alto chiude in pari nel {high_draw_rate * 100:.1f}% dei casi."
+            )
+        else:
+            guidance["metrics_to_review"].append("Draw risk alto non sta ancora separando bene i pareggi rispetto alla media.")
+        if high_draw_total < 20:
+            guidance["sample_warnings"].append(
+                f"Draw risk alto con campione piccolo: {high_draw_total} partite nel bucket alto."
+            )
+
+    high_upset_total = int(general_review.get("high_upset_total", 0) or 0)
+    high_upset_hits = int(general_review.get("high_upset_hits", 0) or 0)
+    if high_upset_total:
+        high_upset_rate = high_upset_hits / high_upset_total
+        if high_upset_rate <= overall_adjusted_non_win_rate + 0.05:
+            guidance["metrics_to_review"].append("Upset risk ancora poco separante: va reso piu specifico sul profilo fragile del favorito.")
+        else:
+            guidance["promising_metrics"].append("Upset risk mostra segnali utili, ma richiede ancora conferma su un campione piu ampio.")
+        if high_upset_total < 20:
+            guidance["sample_warnings"].append(
+                f"Upset risk alto con campione piccolo: {high_upset_total} partite nel bucket alto."
+            )
+    else:
+        guidance["metrics_to_review"].append("Upset risk ancora poco separante: il bucket alto non ha ancora un campione utile per valutarlo.")
+
+    high_conf_df = backtest_df.loc[(backtest_df["confidence_bucket"] == "alto") & adjusted_mask]
+    low_conf_df = backtest_df.loc[(backtest_df["confidence_bucket"] == "basso") & adjusted_mask]
+    if not high_conf_df.empty and not low_conf_df.empty:
+        high_conf_rate = float(high_conf_df["adjusted_favorite_not_lose"].fillna(False).mean())
+        low_conf_rate = float(low_conf_df["adjusted_favorite_not_lose"].fillna(False).mean())
+        if high_conf_rate > low_conf_rate:
+            guidance["promising_metrics"].append(
+                f"Confidence alta utile: {high_conf_rate * 100:.1f}% contro {low_conf_rate * 100:.1f}% della confidence bassa."
+            )
+        else:
+            guidance["metrics_to_review"].append("Confidence non separa ancora bene i match piu affidabili da quelli fragili.")
+
+    if int(general_review.get("matches_analyzed", 0) or 0) < 80:
+        guidance["sample_warnings"].append("Campione review ancora ridotto: le indicazioni vanno lette con prudenza.")
+
+    for key in guidance:
+        deduped: list[str] = []
+        for item in guidance[key]:
+            if item and item not in deduped:
+                deduped.append(item)
+        guidance[key] = deduped
+
+    return guidance
 
 
 def build_review_conclusions(
@@ -567,21 +816,31 @@ def build_model_review(
     season_df: pd.DataFrame,
     minimum_team_history: int = 1,
 ) -> dict[str, Any]:
+    ratings_audit = build_ratings_audit(season_df)
     backtest_df, factors_df = build_backtest_rows(season_df, minimum_team_history=minimum_team_history)
     general_review = build_general_review(backtest_df)
     diagnostic_tables = build_diagnostic_tables(backtest_df)
     bucket_review = build_bucket_review(backtest_df)
-    factor_review_df = build_factor_review(factors_df)
+    factor_review_df = build_factor_review(factors_df, ratings_audit=ratings_audit)
     conclusions = build_review_conclusions(backtest_df, factor_review_df, general_review)
+    calibration_guidance = build_calibration_guidance(
+        backtest_df,
+        factor_review_df,
+        general_review,
+        bucket_review,
+        ratings_audit=ratings_audit,
+    )
 
     return {
         "ok": not backtest_df.empty,
         "message": None if not backtest_df.empty else "Dati insufficienti per costruire il backtest stagionale.",
         "backtest_df": backtest_df,
         "factors_df": factors_df,
+        "ratings_audit": ratings_audit,
         "general_review": general_review,
         "diagnostic_tables": diagnostic_tables,
         "bucket_review": bucket_review,
         "factor_review": factor_review_df,
+        "calibration_guidance": calibration_guidance,
         "conclusions": conclusions,
     }
