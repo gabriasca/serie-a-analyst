@@ -112,6 +112,7 @@ else:
 if review:
     backtest_df = review["backtest_df"]
     ratings_audit = review.get("ratings_audit", {})
+    schedule_audit = review.get("schedule_audit", {})
     general_review = review["general_review"]
     diagnostic_tables = review["diagnostic_tables"]
     bucket_review = review["bucket_review"]
@@ -218,6 +219,8 @@ if review:
             f"Audit Elo: {ratings_audit.get('status', 'n/d')}. "
             f"{ratings_audit.get('note', '')}"
         )
+    if schedule_audit:
+        st.caption(f"Audit calendario: {schedule_audit.get('note', 'Contesto calendario non disponibile.')}")
 
     guidance_col1, guidance_col2 = st.columns(2)
     with guidance_col1:

@@ -11,6 +11,23 @@ from src.seed_data import bootstrap_database
 
 st.set_page_config(page_title=f"{APP_TITLE} | Report Partita", layout="wide")
 
+
+def _format_schedule_value(value: object, suffix: str = "") -> str:
+    if value is None or pd.isna(value):
+        return "n/d"
+    if isinstance(value, float):
+        return f"{value:.1f}{suffix}"
+    return f"{value}{suffix}"
+
+
+def _format_form_block(form: dict[str, object]) -> str:
+    if not form or not form.get("matches"):
+        return "n/d"
+    return (
+        f"{form.get('form_string', '-')} "
+        f"({form.get('points', 0)} pt, GF {form.get('goals_for', 0)}, GA {form.get('goals_against', 0)})"
+    )
+
 bootstrap_database()
 
 st.title("Report Partita")
@@ -79,6 +96,7 @@ away_rating = ratings.get("away")
 advanced = report.get("advanced_metrics", {})
 home_advanced = advanced.get("home") or {}
 away_advanced = advanced.get("away") or {}
+schedule_context = report.get("schedule_context", {})
 
 st.header(report["match_title"])
 
@@ -102,6 +120,35 @@ with rating_col2:
         f"{away_rating['rating_value']:.0f}" if away_rating else "n/d",
     )
 st.caption(ratings.get("note", "Il rating e usato come indicatore di forza storica/recente, non come certezza."))
+
+st.subheader("Calendario e riposo")
+if isinstance(schedule_context, dict) and schedule_context.get("available"):
+    st.caption(
+        schedule_context.get(
+            "calendar_context_note",
+            "Il contesto calendario e basato sulle partite disponibili nel database.",
+        )
+    )
+    home_load = schedule_context.get("home_schedule_load", {})
+    away_load = schedule_context.get("away_schedule_load", {})
+    sched_left, sched_right = st.columns(2)
+    with sched_left:
+        st.markdown(f"### {report['home_team']}")
+        rest_col, load_col, games_col = st.columns(3)
+        rest_col.metric("Riposo", _format_schedule_value(schedule_context.get("rest_days_home"), " gg"))
+        load_col.metric("Carico", home_load.get("load_label", "n/d"))
+        games_col.metric("Partite 14 gg", home_load.get("matches_last_14", 0))
+        st.caption(f"Forma tutte le competizioni: {_format_form_block(schedule_context.get('home_recent_all_comp_form', {}))}")
+    with sched_right:
+        st.markdown(f"### {report['away_team']}")
+        rest_col, load_col, games_col = st.columns(3)
+        rest_col.metric("Riposo", _format_schedule_value(schedule_context.get("rest_days_away"), " gg"))
+        load_col.metric("Carico", away_load.get("load_label", "n/d"))
+        games_col.metric("Partite 14 gg", away_load.get("matches_last_14", 0))
+        st.caption(f"Forma tutte le competizioni: {_format_form_block(schedule_context.get('away_recent_all_comp_form', {}))}")
+    st.info(schedule_context.get("summary", "Contesto calendario letto sulle partite disponibili."))
+else:
+    st.caption("Contesto calendario non disponibile in modo completo per questa partita.")
 
 st.subheader("Metriche avanzate interne")
 st.caption(advanced.get("note", "Questi indicatori interni aiutano a leggere il match, ma non sono xG reali."))

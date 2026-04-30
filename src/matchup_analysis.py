@@ -8,6 +8,7 @@ from src.advanced_metrics import build_advanced_team_metrics, get_team_advanced_
 from src.analytics import get_teams, prepare_matches_dataframe
 from src.context_engine import build_context_adjusted_edge
 from src.predictor import predict_match
+from src.schedule_context import build_match_schedule_context
 from src.team_profiles import build_team_profile_context, build_team_profile_with_ratings
 
 
@@ -490,6 +491,7 @@ def build_matchup_summary(
     style_advantage: dict[str, Any],
     mismatches: list[str],
     predictor_context: dict[str, Any],
+    schedule_context: dict[str, Any] | None = None,
 ) -> str:
     home_team = str(home_profile.get("team") or "La squadra di casa")
     away_team = str(away_profile.get("team") or "La squadra ospite")
@@ -521,6 +523,9 @@ def build_matchup_summary(
         )
     else:
         lines.append("Il predictor non e disponibile in modo affidabile, quindi il peso dell'analisi resta ancora piu qualitativo.")
+
+    if schedule_context and schedule_context.get("available"):
+        lines.append(schedule_context.get("summary", "Il contesto calendario viene letto sulle partite disponibili."))
 
     lines.append(
         "La lettura prudente e questa: i dati indicano chi parte leggermente meglio e dove nascono i rischi, ma il matchup puo cambiare se il ritmo reale del match rompe i profili medi."
@@ -583,17 +588,19 @@ def build_matchup_analysis(
     comparison_rows = compare_advanced_metrics(home_metrics, away_metrics, home_team=home_team, away_team=away_team)
     mismatches = identify_key_mismatches(home_profile, away_profile, predictor_context=predictor_context, comparison_rows=comparison_rows)
     style_advantage = build_style_advantage(home_profile, away_profile, predictor)
+    schedule_context = build_match_schedule_context(prepared_df, home_team, away_team)
     context_engine = build_context_adjusted_edge(
         home_profile,
         away_profile,
         predictor_context=predictor_context,
         mismatches=mismatches,
         style_advantage=style_advantage,
+        schedule_context=schedule_context,
     )
     home_risks = build_home_team_risks(home_profile, away_profile, predictor_context=predictor_context)
     away_risks = build_away_team_risks(home_profile, away_profile, predictor_context=predictor_context)
     tactical_questions = build_tactical_questions(home_profile, away_profile, predictor_context=predictor_context)
-    summary = build_matchup_summary(home_profile, away_profile, style_advantage, mismatches, predictor_context)
+    summary = build_matchup_summary(home_profile, away_profile, style_advantage, mismatches, predictor_context, schedule_context)
 
     warnings: list[str] = []
     if home_profile["general"]["matches"] < 6 or away_profile["general"]["matches"] < 6:
@@ -606,6 +613,7 @@ def build_matchup_analysis(
         warnings.append("Metriche avanzate non complete: alcuni mismatch sono letti soprattutto con profilo squadra e rendimento.")
     if float(context_engine.get("confidence", 0.0) or 0.0) < 45.0:
         warnings.append("Il contesto abbassa la confidenza della lettura: il matchup resta molto aperto o con segnali contrastanti.")
+    warnings.extend(schedule_context.get("warnings", []))
 
     return {
         "ok": True,
@@ -618,6 +626,7 @@ def build_matchup_analysis(
         "metric_comparison": comparison_rows,
         "predictor": predictor,
         "predictor_context": predictor_context,
+        "schedule_context": schedule_context,
         "context_engine": context_engine,
         "mismatches": mismatches,
         "style_advantage": style_advantage,

@@ -8,6 +8,7 @@ from src.advanced_metrics import build_advanced_team_metrics, get_team_advanced_
 from src.analytics import build_standings, compute_team_stats, get_team_match_log
 from src.predictor import predict_match
 from src.ratings import get_team_rating
+from src.schedule_context import build_match_schedule_context
 
 
 def _empty_split() -> dict[str, float | int | str]:
@@ -215,9 +216,12 @@ def build_key_factors(report_data: dict[str, Any]) -> list[str]:
     home_general = report_data["general_performance"]["home"]
     away_general = report_data["general_performance"]["away"]
     advanced = report_data.get("advanced_metrics", {})
+    schedule_context = report_data.get("schedule_context", {})
 
     factors: list[str] = []
     factors.extend(advanced.get("key_factors", [])[:3])
+    if isinstance(schedule_context, dict) and schedule_context.get("available"):
+        factors.append(schedule_context.get("summary", "Il calendario viene letto sulle partite disponibili nel database."))
 
     recent_gap = home_recent["points"] - away_recent["points"]
     if recent_gap > 0:
@@ -335,6 +339,7 @@ def build_match_summary(report_data: dict[str, Any]) -> str:
     impact = report_data["table_context"]["note"]
     prediction = report_data["prediction"]
     advanced = report_data.get("advanced_metrics", {})
+    schedule_context = report_data.get("schedule_context", {})
 
     form_leader = home if home_recent["points"] >= away_recent["points"] else away
     attack_leader = home if home_general["avg_goals_for"] >= away_general["avg_goals_for"] else away
@@ -355,6 +360,8 @@ def build_match_summary(report_data: dict[str, Any]) -> str:
             f"{advanced['away'].get('offensive_threat_index', 'n/d')}/100 per {away}, con un confronto "
             f"anche su solidita difensiva e momento recente."
         )
+    if isinstance(schedule_context, dict) and schedule_context.get("available"):
+        summary_lines.append(schedule_context.get("summary", "Il contesto calendario viene letto sulle partite disponibili."))
 
     if prediction.get("ok"):
         probs = prediction["probabilities"]
@@ -436,6 +443,7 @@ def build_match_report_data(
             "note": "Il rating e usato come indicatore di forza storica/recente, non come certezza.",
         },
         "advanced_metrics": _build_advanced_comparison(df, home_team, away_team),
+        "schedule_context": build_match_schedule_context(df, home_team, away_team),
         "table_context": {
             "home_position": positions.get(home_team),
             "away_position": positions.get(away_team),

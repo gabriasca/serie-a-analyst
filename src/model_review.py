@@ -11,6 +11,7 @@ from src.context_engine import build_context_adjusted_edge
 from src.db import get_connection, init_db
 from src.matchup_analysis import build_predictor_context, build_style_advantage, identify_key_mismatches
 from src.predictor import predict_match
+from src.schedule_context import build_match_schedule_context, build_schedule_data_audit
 from src.team_profiles import build_team_profile_context, build_team_profile_with_ratings
 
 
@@ -330,12 +331,19 @@ def build_backtest_rows(
             predictor_context=predictor_context,
         )
         style_advantage = build_style_advantage(home_profile, away_profile, predictor)
+        schedule_context = build_match_schedule_context(
+            historical_df,
+            home_team,
+            away_team,
+            match_date=row.get("match_date"),
+        )
         context_engine = build_context_adjusted_edge(
             home_profile,
             away_profile,
             predictor_context=predictor_context,
             mismatches=mismatches,
             style_advantage=style_advantage,
+            schedule_context=schedule_context,
         )
         actual_outcome, actual_sign = _actual_outcome(row)
         base_edge = _safe_float(context_engine.get("base_edge")) or 0.0
@@ -564,6 +572,7 @@ def build_bucket_review(backtest_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
 def build_factor_review(
     factors_df: pd.DataFrame,
     ratings_audit: dict[str, Any] | None = None,
+    schedule_audit: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     if factors_df.empty:
         return pd.DataFrame()
@@ -581,6 +590,9 @@ def build_factor_review(
             use_for_calibration = False
             calibration_status = str(ratings_audit.get("status") or "informativo")
             calibration_note = str(ratings_audit.get("note") or "")
+        elif factor_name == "schedule" and schedule_audit and schedule_audit.get("only_league_data", True):
+            calibration_status = "parziale: solo partite disponibili"
+            calibration_note = "La valutazione calendario e prudente perche mancano dati coppe/europee."
         elif factor_name == "stakes":
             calibration_status = "proxy prudente"
             calibration_note = "Proxy sintetico di pressione partita: utile come contesto, ma da pesare poco."
@@ -620,6 +632,7 @@ def build_calibration_guidance(
     general_review: dict[str, Any],
     bucket_review: dict[str, pd.DataFrame],
     ratings_audit: dict[str, Any] | None = None,
+    schedule_audit: dict[str, Any] | None = None,
 ) -> dict[str, list[str]]:
     guidance = {
         "factors_to_value": [],
@@ -667,6 +680,12 @@ def build_calibration_guidance(
     if ratings_audit and not ratings_audit.get("historical_ready", False):
         guidance["metrics_to_review"].append(
             f"Rating Elo da verificare: {ratings_audit.get('note', 'copertura storica non sufficiente per calibrazione.')}"
+        )
+
+    schedule_audit = schedule_audit or {}
+    if schedule_audit.get("only_league_data", False):
+        guidance["sample_warnings"].append(
+            "La valutazione calendario e parziale perche nel database corrente mancano dati coppe/europee."
         )
 
     overall_draw_rate = float((backtest_df["actual_outcome"] == "X").mean())
@@ -817,11 +836,12 @@ def build_model_review(
     minimum_team_history: int = 1,
 ) -> dict[str, Any]:
     ratings_audit = build_ratings_audit(season_df)
+    schedule_audit = build_schedule_data_audit(season_df)
     backtest_df, factors_df = build_backtest_rows(season_df, minimum_team_history=minimum_team_history)
     general_review = build_general_review(backtest_df)
     diagnostic_tables = build_diagnostic_tables(backtest_df)
     bucket_review = build_bucket_review(backtest_df)
-    factor_review_df = build_factor_review(factors_df, ratings_audit=ratings_audit)
+    factor_review_df = build_factor_review(factors_df, ratings_audit=ratings_audit, schedule_audit=schedule_audit)
     conclusions = build_review_conclusions(backtest_df, factor_review_df, general_review)
     calibration_guidance = build_calibration_guidance(
         backtest_df,
@@ -829,6 +849,7 @@ def build_model_review(
         general_review,
         bucket_review,
         ratings_audit=ratings_audit,
+        schedule_audit=schedule_audit,
     )
 
     return {
@@ -837,6 +858,7 @@ def build_model_review(
         "backtest_df": backtest_df,
         "factors_df": factors_df,
         "ratings_audit": ratings_audit,
+        "schedule_audit": schedule_audit,
         "general_review": general_review,
         "diagnostic_tables": diagnostic_tables,
         "bucket_review": bucket_review,

@@ -61,6 +61,15 @@ def _render_bullets(items: list[str]) -> None:
     st.markdown("\n".join(f"- {item}" for item in items))
 
 
+def _format_form_block(form: dict[str, object]) -> str:
+    if not form or not form.get("matches"):
+        return "n/d"
+    return (
+        f"{form.get('form_string', '-')} "
+        f"({form.get('points', 0)} pt, GF {form.get('goals_for', 0)}, GA {form.get('goals_against', 0)})"
+    )
+
+
 st.set_page_config(page_title=f"{APP_TITLE} | Matchup Analysis", layout="wide")
 
 bootstrap_database()
@@ -172,6 +181,41 @@ if analysis:
     if predictor_context.get("bullets"):
         st.caption("Perche il predictor spinge in questa direzione:")
         _render_bullets(predictor_context["bullets"])
+
+    schedule_context = analysis.get("schedule_context", {})
+    if isinstance(schedule_context, dict):
+        st.subheader("Calendario e riposo")
+        st.caption(
+            schedule_context.get(
+                "calendar_context_note",
+                "Contesto calendario basato sulle partite disponibili nel database.",
+            )
+        )
+        if schedule_context.get("available"):
+            home_load = schedule_context.get("home_schedule_load", {})
+            away_load = schedule_context.get("away_schedule_load", {})
+            sched_col1, sched_col2 = st.columns(2)
+            with sched_col1:
+                st.markdown(f"### {analysis['home_team']}")
+                row1, row2, row3, row4 = st.columns(4)
+                row1.metric("Riposo", _format_number(schedule_context.get("rest_days_home"), digits=0, suffix=" gg"))
+                row2.metric("Carico", home_load.get("load_label", "n/d"))
+                row3.metric("Partite 14 gg", home_load.get("matches_last_14", 0))
+                row4.metric("Competizioni recenti", home_load.get("recent_competitions_count", 0))
+                st.write(f"Forma all competitions: {_format_form_block(schedule_context.get('home_recent_all_comp_form', {}))}")
+                st.write(f"Forma campionato: {_format_form_block(schedule_context.get('home_recent_league_form', {}))}")
+            with sched_col2:
+                st.markdown(f"### {analysis['away_team']}")
+                row1, row2, row3, row4 = st.columns(4)
+                row1.metric("Riposo", _format_number(schedule_context.get("rest_days_away"), digits=0, suffix=" gg"))
+                row2.metric("Carico", away_load.get("load_label", "n/d"))
+                row3.metric("Partite 14 gg", away_load.get("matches_last_14", 0))
+                row4.metric("Competizioni recenti", away_load.get("recent_competitions_count", 0))
+                st.write(f"Forma all competitions: {_format_form_block(schedule_context.get('away_recent_all_comp_form', {}))}")
+                st.write(f"Forma campionato: {_format_form_block(schedule_context.get('away_recent_league_form', {}))}")
+            st.info(schedule_context.get("summary", "Contesto calendario disponibile sulle partite presenti."))
+        else:
+            st.caption("Contesto calendario non disponibile in modo completo per questo matchup.")
 
     st.subheader("Confronto metriche avanzate")
     comparison_rows = analysis.get("metric_comparison", [])

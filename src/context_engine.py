@@ -11,6 +11,7 @@ FACTOR_BASE_WEIGHTS = {
     "predictor": 0.72,
     "recent_form": 0.98,
     "home_away": 1.12,
+    "schedule": 0.64,
     "matchup": 1.16,
     "bucket_performance": 1.1,
 }
@@ -78,6 +79,10 @@ def _factor_note(feature_name: str, factor_data: dict[str, Any], weighted_impact
         return f"Il momento recente pesa a favore di {leader}." if direction else "La forma recente non crea un vero margine."
     if feature_name == "home_away":
         return f"Il contesto casa/fuori favorisce {leader}." if direction else "Il fattore casa/fuori non produce un vantaggio forte."
+    if feature_name == "schedule":
+        if factor_data.get("only_league_data"):
+            return "Il calendario entra come segnale prudente perche oggi copre solo le partite disponibili."
+        return f"Riposo e carico partite favoriscono {leader}." if direction else "Riposo e carico partite non creano un margine netto."
     if feature_name == "matchup":
         return f"Il mismatch attacco vs difesa pende verso {leader}." if direction else "I mismatch principali restano distribuiti."
     if feature_name == "bucket_performance":
@@ -134,6 +139,17 @@ def compute_feature_reliability(feature_name: str, factor_data: dict[str, Any]) 
         return round(_clamp(0.44 + (recent_matches / 5.0) * 0.40, 0.44, 0.86), 2)
     if feature_name == "home_away":
         return round(_clamp(0.60 + (min_matches / 18.0) * 0.28, 0.60, 0.92), 2)
+    if feature_name == "schedule":
+        if not factor_data.get("rest_available") and not factor_data.get("load_available"):
+            return 0.0
+        base = 0.42 if factor_data.get("only_league_data") else 0.56
+        base += min_matches / 20.0 * 0.18
+        if factor_data.get("rest_available"):
+            base += 0.08
+        if factor_data.get("load_available"):
+            base += 0.06
+        upper = 0.74 if factor_data.get("only_league_data") else 0.88
+        return round(_clamp(base, 0.30, upper), 2)
     if feature_name == "matchup":
         metric_coverage = float(factor_data.get("metric_coverage", 0.0) or 0.0)
         return round(_clamp(0.52 + metric_coverage * 0.28 + (min_matches / 18.0) * 0.16, 0.46, 0.92), 2)
@@ -175,6 +191,14 @@ def compute_context_relevance(
         relevance = 0.48 + (0.18 if gap >= 0.50 else 0.08 if gap >= 0.25 else 0.0)
         if factor_data.get("home_dependency_high") or factor_data.get("away_dependency_high"):
             relevance += 0.10
+    elif feature_name == "schedule":
+        rest_gap = abs(float(factor_data.get("rest_gap", 0.0) or 0.0))
+        load_gap = abs(float(factor_data.get("load_gap", 0.0) or 0.0))
+        relevance = 0.34 + min(rest_gap / 10.0, 0.16) + min(load_gap * 0.08, 0.12)
+        if factor_data.get("multi_competition_available"):
+            relevance += 0.08
+        if factor_data.get("only_league_data"):
+            relevance -= 0.05
     elif feature_name == "matchup":
         relevance = 0.62 + (0.18 if gap >= 18 else 0.10 if gap >= 10 else 0.0)
         if int(factor_data.get("mismatch_count", 0) or 0) >= 2:
@@ -225,6 +249,14 @@ def compute_matchup_multiplier(
             multiplier = 1.14
         elif float(factor_data.get("gap", 0.0) or 0.0) < 0:
             multiplier = 1.06
+        else:
+            multiplier = 1.0
+    elif feature_name == "schedule":
+        signal_abs = abs(float(factor_data.get("signal", 0.0) or 0.0))
+        if signal_abs >= 1.5 and factor_data.get("multi_competition_available"):
+            multiplier = 1.08
+        elif factor_data.get("only_league_data"):
+            multiplier = 0.90
         else:
             multiplier = 1.0
     elif feature_name == "matchup":
@@ -381,10 +413,12 @@ def build_context_adjusted_edge(
     predictor_context: dict[str, Any] | None = None,
     mismatches: list[str] | None = None,
     style_advantage: dict[str, Any] | None = None,
+    schedule_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     predictor_context = predictor_context or {}
     mismatches = mismatches or []
     style_advantage = style_advantage or {}
+    schedule_context = schedule_context or {}
 
     home_team = str(home_profile.get("team") or "Casa")
     away_team = str(away_profile.get("team") or "Trasferta")
@@ -426,6 +460,33 @@ def build_context_adjusted_edge(
     home_context_gap = float(home_home_away.get("ppm_home", 0.0) or 0.0) - float(away_home_away.get("ppm_away", 0.0) or 0.0)
     home_dependency = _safe_float(home_advanced.get("home_dependency_index")) or 0.0
     away_dependency = _safe_float(away_advanced.get("home_dependency_index")) or 0.0
+
+    schedule_audit = schedule_context.get("competition_audit", {}) if isinstance(schedule_context, dict) else {}
+    home_schedule_load = schedule_context.get("home_schedule_load", {}) if isinstance(schedule_context, dict) else {}
+    away_schedule_load = schedule_context.get("away_schedule_load", {}) if isinstance(schedule_context, dict) else {}
+    home_all_form = schedule_context.get("home_recent_all_comp_form", {}) if isinstance(schedule_context, dict) else {}
+    away_all_form = schedule_context.get("away_recent_all_comp_form", {}) if isinstance(schedule_context, dict) else {}
+    rest_advantage = _safe_float(schedule_context.get("rest_advantage")) if isinstance(schedule_context, dict) else None
+    home_load_score = _safe_float(home_schedule_load.get("load_score")) or 0.0
+    away_load_score = _safe_float(away_schedule_load.get("load_score")) or 0.0
+    load_gap = away_load_score - home_load_score
+    home_all_ppm = _safe_float(home_all_form.get("ppm")) or 0.0
+    away_all_ppm = _safe_float(away_all_form.get("ppm")) or 0.0
+    all_comp_form_gap = home_all_ppm - away_all_ppm if schedule_audit.get("multi_competition_available") else 0.0
+    schedule_signal_raw = 0.0
+    if rest_advantage is not None:
+        schedule_signal_raw += _clamp(rest_advantage, -7.0, 7.0) / 2.5
+    schedule_signal_raw += load_gap * 0.75
+    schedule_signal_raw += all_comp_form_gap * 0.35
+    schedule_min_matches = min(
+        int(home_all_form.get("matches", 0) or 0),
+        int(away_all_form.get("matches", 0) or 0),
+    )
+    schedule_available = bool(schedule_context.get("schedule_factor_available")) and (
+        rest_advantage is not None or bool(home_schedule_load) or bool(away_schedule_load)
+    )
+    if not schedule_available:
+        schedule_signal_raw = 0.0
 
     home_attack = _safe_float(home_advanced.get("offensive_threat_index"))
     away_attack = _safe_float(away_advanced.get("offensive_threat_index"))
@@ -507,6 +568,20 @@ def build_context_adjusted_edge(
             "gap": home_context_gap,
             "home_dependency_high": home_dependency >= 65.0,
             "away_dependency_high": away_dependency >= 65.0,
+        },
+        {
+            "factor": "schedule",
+            "label": "Calendario / riposo",
+            "signal": _scaled_signal(schedule_signal_raw, divisor=1.0, cap=3.0),
+            "available": schedule_available,
+            "min_matches": schedule_min_matches,
+            "gap": abs(schedule_signal_raw),
+            "rest_gap": abs(rest_advantage) if rest_advantage is not None else 0.0,
+            "load_gap": abs(load_gap),
+            "rest_available": rest_advantage is not None,
+            "load_available": bool(home_schedule_load) and bool(away_schedule_load),
+            "only_league_data": bool(schedule_audit.get("only_league_data", True)),
+            "multi_competition_available": bool(schedule_audit.get("multi_competition_available", False)),
         },
         {
             "factor": "matchup",

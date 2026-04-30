@@ -39,6 +39,15 @@ def _render_bullets(items: list[str]) -> None:
     st.markdown("\n".join(f"- {item}" for item in items))
 
 
+def _format_form_block(form: dict[str, object]) -> str:
+    if not form or not form.get("matches"):
+        return "n/d"
+    return (
+        f"{form.get('form_string', '-')} "
+        f"({form.get('points', 0)} pt, GF {form.get('goals_for', 0)}, GA {form.get('goals_against', 0)})"
+    )
+
+
 def _safe_bar_chart(data: pd.DataFrame, fallback_message: str) -> None:
     try:
         st.bar_chart(data)
@@ -121,6 +130,7 @@ recent = profile["recent"]
 indicators = profile["indicators"]
 rating = profile["rating"]
 advanced = profile.get("advanced_metrics", {})
+schedule_context = profile.get("schedule_context", {})
 vs_strength_rows = profile["vs_strength_buckets"]
 
 st.subheader("Riepilogo generale")
@@ -182,6 +192,23 @@ recent_col1.metric("Ultime 5", recent["form_string"])
 recent_col2.metric("Punti ultime 5", recent["points"])
 recent_col3.metric("Gol fatti ultime 5", recent["goals_for"])
 recent_col4.metric("Gol subiti ultime 5", recent["goals_against"])
+
+st.subheader("Forma multi-competizione e calendario")
+if isinstance(schedule_context, dict) and schedule_context:
+    schedule_load = schedule_context.get("schedule_load", {})
+    form_comparison = schedule_context.get("form_comparison", {})
+    league_form = form_comparison.get("league_form", {})
+    all_comp_form = form_comparison.get("all_competition_form", {})
+    sched_col1, sched_col2, sched_col3, sched_col4 = st.columns(4)
+    sched_col1.metric("Riposo ultimo match", _format_number(schedule_load.get("rest_days"), digits=0, suffix=" gg"))
+    sched_col2.metric("Carico calendario", schedule_load.get("load_label", "n/d"))
+    sched_col3.metric("Partite 14 gg", schedule_load.get("matches_last_14", 0))
+    sched_col4.metric("Competizioni recenti", schedule_load.get("recent_competitions_count", 0))
+    st.write(f"Forma campionato: {_format_form_block(league_form)}")
+    st.write(f"Forma tutte le competizioni disponibili: {_format_form_block(all_comp_form)}")
+    st.caption(schedule_context.get("note") or "Contesto calendario basato sulle partite disponibili.")
+else:
+    st.caption("Dati calendario non disponibili per questa squadra.")
 
 if advanced:
     st.subheader("Metriche avanzate v1")

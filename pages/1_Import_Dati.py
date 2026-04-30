@@ -14,7 +14,8 @@ from src.data_import import (
     save_dataframe_to_sqlite,
     validate_required_columns,
 )
-from src.db import delete_all_matches, delete_matches_by_season, get_database_status
+from src.data_freshness import build_data_freshness_report
+from src.db import delete_all_matches, delete_matches_by_season, fetch_matches, get_database_status
 from src.demo_data import load_demo_data
 from src.seed_data import bootstrap_database
 
@@ -80,14 +81,29 @@ def format_sources(sources: object) -> str:
     return ", ".join(labels) if labels else "nessuna"
 
 
+def render_freshness_message(status: object, message: object) -> None:
+    status_text = str(status or "attenzione")
+    message_text = str(message or "Stato aggiornamento dati non disponibile.")
+    if status_text == "ok":
+        st.success(message_text)
+    elif status_text == "database_vuoto":
+        st.warning(message_text)
+    elif status_text == "dati_parziali":
+        st.info(message_text)
+    else:
+        st.warning(message_text)
+
+
 st.set_page_config(page_title=f"{APP_TITLE} | Import Dati", layout="wide")
 
 status_error = None
 try:
     bootstrap_database()
     db_status = safe_status(get_database_status())
+    freshness_report = build_data_freshness_report(fetch_matches())
 except Exception as exc:  # pragma: no cover - defensive fallback for cloud/runtime issues
     db_status = safe_status({})
+    freshness_report = build_data_freshness_report(pd.DataFrame())
     status_error = str(exc)
 
 seasons = safe_list(db_status.get("seasons", []))
@@ -109,6 +125,26 @@ if PUBLIC_DEMO_MODE:
     st.write(f"Stagioni presenti: {', '.join(str(season) for season in seasons) if seasons else 'nessuna'}")
     st.write("Competizioni presenti: " + format_competitions(db_status.get("competitions", [])))
     st.write("Fonti dati: " + format_sources(db_status.get("sources", [])))
+
+    st.subheader("Stato aggiornamento dati")
+    fresh_col1, fresh_col2, fresh_col3, fresh_col4 = st.columns(4)
+    fresh_col1.metric("Ultima data partita", freshness_report.get("latest_match_date") or "n/d")
+    fresh_col2.metric("Partite caricate", freshness_report.get("match_count", 0))
+    fresh_col3.metric("Partite teoriche totali", freshness_report.get("expected_total_matches", 0))
+    fresh_col4.metric("Mancanti stimate", freshness_report.get("missing_matches_estimate", 0))
+    st.write("Fonti dati freshness: " + ", ".join(str(source) for source in freshness_report.get("source_names", [])))
+    render_freshness_message(
+        freshness_report.get("freshness_status"),
+        freshness_report.get("freshness_message") or freshness_report.get("freshness_summary"),
+    )
+
+    st.subheader("Ultimi match caricati")
+    latest_matches = freshness_report.get("latest_matches")
+    if isinstance(latest_matches, pd.DataFrame) and not latest_matches.empty:
+        st.dataframe(latest_matches, width="stretch")
+    else:
+        st.caption("Nessun match disponibile da mostrare.")
+
     st.info(
         "Questa versione pubblica e consultabile. "
         "Gli aggiornamenti dati vengono fatti dall'autore aggiornando il CSV seed."

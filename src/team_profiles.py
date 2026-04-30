@@ -11,6 +11,7 @@ from src.advanced_metrics import (
 )
 from src.analytics import RESULT_LABELS, build_standings, get_teams, prepare_matches_dataframe
 from src.ratings import build_strength_bucket_map, enrich_standings_with_ratings
+from src.schedule_context import compare_league_vs_all_competition_form, compute_team_schedule_load
 
 
 TOP_BUCKET_KEY = "top"
@@ -620,6 +621,7 @@ def build_team_profile_summary(profile: dict[str, Any]) -> str:
     recent = profile["recent"]
     rating = profile.get("rating", {})
     advanced = profile.get("advanced_metrics", {})
+    schedule_context = profile.get("schedule_context", {})
     versus = {row.get("bucket_key", row["bucket_label"]): row for row in profile["vs_strength_buckets"]}
     archetypes = ", ".join(profile["archetypes"][:4])
 
@@ -645,6 +647,14 @@ def build_team_profile_summary(profile: dict[str, Any]) -> str:
             f"e ha raccolto {recent['points']} punti con {recent['goals_for']} gol fatti e {recent['goals_against']} subiti."
         ),
     ]
+    if schedule_context:
+        form_comparison = schedule_context.get("form_comparison", {})
+        all_form = form_comparison.get("all_competition_form", {})
+        schedule_load = schedule_context.get("schedule_load", {})
+        lines.append(
+            f"Sul calendario disponibile, la forma tutte le competizioni e {all_form.get('form_string', '-')} "
+            f"con {all_form.get('points', 0)} punti; il carico recente e {schedule_load.get('load_label', 'n/d')}."
+        )
     if rating.get("available"):
         lines.append(
             f"Il rating Elo attuale e {rating['rating_value']:.0f}, con fascia forza {rating['strength_band']} "
@@ -722,6 +732,8 @@ def _build_team_profile_from_context(context: dict[str, Any], team: str) -> dict
     home_away = compute_home_away_identity(prepared_df, team, context=context)
     recent = compute_recent_identity(prepared_df, team, last_n=5, context=context)
     vs_strength_buckets = compute_vs_strength_buckets(prepared_df, team, context=context)
+    schedule_load = compute_team_schedule_load(prepared_df, team)
+    form_comparison = compare_league_vs_all_competition_form(prepared_df, team)
     indicators = {
         "indice_pericolosita_offensiva": offensive["indice_pericolosita_offensiva"],
         "indice_solidita_difensiva": defensive["indice_solidita_difensiva"],
@@ -754,6 +766,11 @@ def _build_team_profile_from_context(context: dict[str, Any], team: str) -> dict
         "home_away": home_away,
         "recent": recent,
         "vs_strength_buckets": vs_strength_buckets,
+        "schedule_context": {
+            "schedule_load": schedule_load,
+            "form_comparison": form_comparison,
+            "note": form_comparison.get("note"),
+        },
         "indicators": indicators,
         "notes": _build_notes(team_df),
         "league_bucket_teams": context.get("bucket_teams", {}),

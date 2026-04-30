@@ -179,6 +179,34 @@ Limiti:
 - il rating Elo e solo informativo
 - non trasforma mai il dato statistico in una certezza
 
+## Schedule & Competition Context
+
+Il layer `Schedule & Competition Context v1` misura riposo, carico partite e differenza tra forma campionato e forma su tutte le competizioni disponibili.
+
+Misura:
+
+- giorni di riposo dall'ultima partita disponibile
+- partite giocate negli ultimi 7, 14 e 30 giorni
+- numero di competizioni recenti presenti nel database
+- forma ultime 5 solo campionato
+- forma ultime 5 su tutte le competizioni disponibili
+- possibile vantaggio riposo rispetto all'avversaria
+
+Uso attuale nell'app:
+
+- `Matchup Analysis` mostra calendario, riposo, carico e forma all competitions
+- `Report Partita` aggiunge una lettura sintetica di calendario/riposo
+- `Profilo Squadra` indica se la forma recente e solo campionato o multi-competizione
+- `context_engine` usa il fattore calendario con peso prudente e non dominante
+- `Model Review` lo valuta tra i fattori, segnalando quando il campione e solo Serie A
+
+Limiti:
+
+- usa solo le partite gia presenti nella tabella `matches`
+- se mancano Coppa Italia o coppe europee, la lettura del carico e parziale
+- diventera piu utile quando verranno importate competizioni extra Serie A
+- non modifica predictor o Proiezione Classifica
+
 ## Model Review e calibrazione context engine
 
 La pagina `Model Review` esegue un backtest storico partita per partita usando solo i dati disponibili prima di ogni match.
