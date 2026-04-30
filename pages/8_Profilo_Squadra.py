@@ -88,6 +88,7 @@ st.caption(
     "Gli indici mostrati sotto sono indicatori interni dell'app: aiutano a leggere tendenze di gioco "
     "e rendimento, ma non rappresentano metriche proprietarie esterne."
 )
+st.caption("Per una lettura piu ampia dell'identita, usa la pagina Studio Squadra.")
 
 if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)

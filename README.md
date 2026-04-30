@@ -142,6 +142,32 @@ Limiti:
 - con campioni piccoli descrivono tendenze utili, ma non stabili
 - non entrano ancora nel predictor e non modificano le proiezioni
 
+## Studio Squadra
+
+La pagina `Studio Squadra` approfondisce l'identita stagionale di un club usando solo dati gia presenti nel database.
+
+Ogni blocco separa:
+
+- dati osservati, come risultati, gol, casa/fuori e rendimento per fascia avversaria
+- indicatori interni, come pericolosita offensiva, solidita difensiva, momento recente e volatilita
+- ipotesi prudenti, cioe letture condizionali basate su regole semplici e non presentate come certezze
+
+Cosa analizza:
+
+- come la squadra tende a vincere, perdere o pareggiare
+- contro quali fasce di avversarie rende meglio o peggio
+- differenza tra identita casa e trasferta
+- trend recente rispetto alla media stagionale
+- stabilita o volatilita del rendimento
+- cosa manca per una vera analisi tattica avanzata
+
+Limiti:
+
+- non usa API esterne o scraping
+- non inventa dati tattici non presenti
+- non puo affermare pressing, costruzione dal basso, possesso o lineups senza dati evento e giocatori
+- non modifica predictor o Proiezione Classifica
+
 ## Matchup Analysis
 
 La pagina `Matchup Analysis` serve a leggere perche una squadra puo trovarsi meglio o peggio contro un'avversaria specifica.
