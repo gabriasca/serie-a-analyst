@@ -207,6 +207,7 @@ def _build_profile_context(
     df: pd.DataFrame,
     ratings_df: pd.DataFrame | None = None,
     advanced_metrics_df: pd.DataFrame | None = None,
+    schedule_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     prepared_df_attr = advanced_metrics_df.attrs.get("prepared_df") if advanced_metrics_df is not None else None
     standings_attr = advanced_metrics_df.attrs.get("standings") if advanced_metrics_df is not None else None
@@ -214,6 +215,15 @@ def _build_profile_context(
     team_logs_attr = advanced_metrics_df.attrs.get("team_logs") if advanced_metrics_df is not None else None
 
     prepared_df = prepared_df_attr.copy() if isinstance(prepared_df_attr, pd.DataFrame) else prepare_matches_dataframe(df)
+    if isinstance(schedule_df, pd.DataFrame) and not schedule_df.empty:
+        schedule_prepared_df = schedule_df.copy()
+        if "id" not in schedule_prepared_df.columns:
+            schedule_prepared_df["id"] = range(1, len(schedule_prepared_df) + 1)
+        if "match_date" in schedule_prepared_df.columns:
+            schedule_prepared_df["match_date"] = pd.to_datetime(schedule_prepared_df["match_date"], errors="coerce")
+            schedule_prepared_df = schedule_prepared_df.sort_values(["match_date", "id"], ascending=[True, True]).reset_index(drop=True)
+    else:
+        schedule_prepared_df = prepared_df
     standings = standings_attr.copy() if isinstance(standings_attr, pd.DataFrame) else build_standings(prepared_df)
     if isinstance(enriched_attr, pd.DataFrame):
         enriched_standings = enriched_attr.copy()
@@ -233,6 +243,7 @@ def _build_profile_context(
         advanced_metrics_df = build_advanced_team_metrics(prepared_df, ratings_df=ratings_df)
     return {
         "prepared_df": prepared_df,
+        "schedule_df": schedule_prepared_df,
         "teams": teams,
         "standings": standings,
         "enriched_standings": enriched_standings,
@@ -695,6 +706,7 @@ def build_team_profile_summary(profile: dict[str, Any]) -> str:
 
 def _build_team_profile_from_context(context: dict[str, Any], team: str) -> dict[str, Any]:
     prepared_df = context.get("prepared_df", pd.DataFrame())
+    schedule_df = context.get("schedule_df", prepared_df)
     team_df = context["team_logs"].get(team, pd.DataFrame())
 
     if team_df.empty:
@@ -732,8 +744,8 @@ def _build_team_profile_from_context(context: dict[str, Any], team: str) -> dict
     home_away = compute_home_away_identity(prepared_df, team, context=context)
     recent = compute_recent_identity(prepared_df, team, last_n=5, context=context)
     vs_strength_buckets = compute_vs_strength_buckets(prepared_df, team, context=context)
-    schedule_load = compute_team_schedule_load(prepared_df, team)
-    form_comparison = compare_league_vs_all_competition_form(prepared_df, team)
+    schedule_load = compute_team_schedule_load(schedule_df, team)
+    form_comparison = compare_league_vs_all_competition_form(schedule_df, team)
     indicators = {
         "indice_pericolosita_offensiva": offensive["indice_pericolosita_offensiva"],
         "indice_solidita_difensiva": defensive["indice_solidita_difensiva"],
@@ -787,12 +799,13 @@ def build_team_profile_context(
     df: pd.DataFrame,
     ratings_df: pd.DataFrame | None = None,
     advanced_metrics_df: pd.DataFrame | None = None,
+    schedule_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
-    return _build_profile_context(df, ratings_df=ratings_df, advanced_metrics_df=advanced_metrics_df)
+    return _build_profile_context(df, ratings_df=ratings_df, advanced_metrics_df=advanced_metrics_df, schedule_df=schedule_df)
 
 
-def build_team_profile(df: pd.DataFrame, team: str) -> dict[str, Any]:
-    context = _build_profile_context(df)
+def build_team_profile(df: pd.DataFrame, team: str, schedule_df: pd.DataFrame | None = None) -> dict[str, Any]:
+    context = _build_profile_context(df, schedule_df=schedule_df)
     return _build_team_profile_from_context(context, team)
 
 
@@ -802,7 +815,8 @@ def build_team_profile_with_ratings(
     ratings_df: pd.DataFrame | None = None,
     advanced_metrics_df: pd.DataFrame | None = None,
     context: dict[str, Any] | None = None,
+    schedule_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     if context is None:
-        context = _build_profile_context(df, ratings_df=ratings_df, advanced_metrics_df=advanced_metrics_df)
+        context = _build_profile_context(df, ratings_df=ratings_df, advanced_metrics_df=advanced_metrics_df, schedule_df=schedule_df)
     return _build_team_profile_from_context(context, team)

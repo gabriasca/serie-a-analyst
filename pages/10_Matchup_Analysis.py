@@ -40,6 +40,13 @@ def _load_season_dataframe(season: str) -> pd.DataFrame:
     return season_df
 
 
+def _load_schedule_dataframe(season: str, fallback_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    schedule_df = fetch_matches(season)
+    if schedule_df.empty and isinstance(fallback_df, pd.DataFrame):
+        return fallback_df
+    return schedule_df
+
+
 def _load_season_teams(season: str) -> list[str]:
     teams = list_teams(season, competition_code=DEFAULT_COMPETITION_CODE)
     if not teams:
@@ -100,11 +107,12 @@ away_team = st.selectbox("Squadra trasferta", away_options, index=0)
 
 if st.button("Analizza matchup"):
     season_df = _load_season_dataframe(selected_season)
+    schedule_df = _load_schedule_dataframe(selected_season, fallback_df=season_df)
     st.session_state["matchup_analysis_result"] = {
         "season": selected_season,
         "home_team": home_team,
         "away_team": away_team,
-        "analysis": build_matchup_analysis(season_df, home_team, away_team),
+        "analysis": build_matchup_analysis(season_df, home_team, away_team, schedule_df=schedule_df),
     }
 
 analysis: dict[str, object] | None = None

@@ -22,6 +22,20 @@ LOW_CONFIDENCE_THRESHOLD = 45.0
 HIGH_CONFIDENCE_THRESHOLD = 65.0
 
 
+def _prepare_optional_schedule_df(schedule_df: pd.DataFrame | None, fallback_df: pd.DataFrame) -> pd.DataFrame:
+    if isinstance(schedule_df, pd.DataFrame) and not schedule_df.empty:
+        candidate_df = schedule_df.copy()
+        if "match_date" not in candidate_df.columns:
+            return fallback_df
+        if "id" not in candidate_df.columns:
+            candidate_df["id"] = range(1, len(candidate_df) + 1)
+        try:
+            return prepare_matches_dataframe(candidate_df)
+        except Exception:
+            return fallback_df
+    return fallback_df
+
+
 def _safe_float(value: Any) -> float | None:
     if value is None or pd.isna(value):
         return None
@@ -272,11 +286,13 @@ def _factor_help_label(weighted_impact: float, actual_sign: int) -> str:
 def build_backtest_rows(
     season_df: pd.DataFrame,
     minimum_team_history: int = 1,
+    schedule_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     prepared_df = prepare_matches_dataframe(season_df)
     if prepared_df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
+    schedule_prepared_df = _prepare_optional_schedule_df(schedule_df, prepared_df)
     ratings_history_df = _load_ratings_history()
     rows: list[dict[str, Any]] = []
     factor_rows: list[dict[str, Any]] = []
@@ -331,8 +347,16 @@ def build_backtest_rows(
             predictor_context=predictor_context,
         )
         style_advantage = build_style_advantage(home_profile, away_profile, predictor)
+        match_date = pd.to_datetime(row.get("match_date"), errors="coerce")
+        if isinstance(schedule_prepared_df, pd.DataFrame) and not schedule_prepared_df.empty and not pd.isna(match_date):
+            schedule_history_df = schedule_prepared_df.loc[schedule_prepared_df["match_date"] < match_date].copy()
+        else:
+            schedule_history_df = historical_df
+        if schedule_history_df.empty:
+            schedule_history_df = historical_df
+
         schedule_context = build_match_schedule_context(
-            historical_df,
+            schedule_history_df,
             home_team,
             away_team,
             match_date=row.get("match_date"),
@@ -834,10 +858,16 @@ def build_review_conclusions(
 def build_model_review(
     season_df: pd.DataFrame,
     minimum_team_history: int = 1,
+    schedule_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
+    schedule_source_df = schedule_df if isinstance(schedule_df, pd.DataFrame) and not schedule_df.empty else season_df
     ratings_audit = build_ratings_audit(season_df)
-    schedule_audit = build_schedule_data_audit(season_df)
-    backtest_df, factors_df = build_backtest_rows(season_df, minimum_team_history=minimum_team_history)
+    schedule_audit = build_schedule_data_audit(schedule_source_df)
+    backtest_df, factors_df = build_backtest_rows(
+        season_df,
+        minimum_team_history=minimum_team_history,
+        schedule_df=schedule_source_df,
+    )
     general_review = build_general_review(backtest_df)
     diagnostic_tables = build_diagnostic_tables(backtest_df)
     bucket_review = build_bucket_review(backtest_df)

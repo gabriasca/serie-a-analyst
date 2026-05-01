@@ -538,6 +538,7 @@ def build_matchup_analysis(
     home_team: str,
     away_team: str,
     ratings_df: pd.DataFrame | None = None,
+    schedule_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     prepared_df = prepare_matches_dataframe(df)
     if prepared_df.empty:
@@ -588,7 +589,8 @@ def build_matchup_analysis(
     comparison_rows = compare_advanced_metrics(home_metrics, away_metrics, home_team=home_team, away_team=away_team)
     mismatches = identify_key_mismatches(home_profile, away_profile, predictor_context=predictor_context, comparison_rows=comparison_rows)
     style_advantage = build_style_advantage(home_profile, away_profile, predictor)
-    schedule_context = build_match_schedule_context(prepared_df, home_team, away_team)
+    schedule_source_df = schedule_df if isinstance(schedule_df, pd.DataFrame) and not schedule_df.empty else prepared_df
+    schedule_context = build_match_schedule_context(schedule_source_df, home_team, away_team)
     context_engine = build_context_adjusted_edge(
         home_profile,
         away_profile,

@@ -75,6 +75,13 @@ def _load_season_dataframe(season: str) -> pd.DataFrame:
     return season_df
 
 
+def _load_schedule_dataframe(season: str, fallback_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    schedule_df = fetch_matches(season)
+    if schedule_df.empty and isinstance(fallback_df, pd.DataFrame):
+        return fallback_df
+    return schedule_df
+
+
 st.set_page_config(page_title=f"{APP_TITLE} | Profilo Squadra", layout="wide")
 
 bootstrap_database()
@@ -114,7 +121,8 @@ if not teams:
     st.stop()
 
 selected_team = st.selectbox("Seleziona squadra", teams)
-profile = build_team_profile(season_df, selected_team)
+schedule_df = _load_schedule_dataframe(selected_season, fallback_df=season_df)
+profile = build_team_profile(season_df, selected_team, schedule_df=schedule_df)
 
 if not profile.get("ok"):
     st.warning(profile.get("message", "Dati insufficienti per costruire il profilo squadra."))

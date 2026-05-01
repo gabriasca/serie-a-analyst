@@ -32,10 +32,18 @@ def _load_season_dataframe(season: str) -> pd.DataFrame:
     return season_df
 
 
+def _load_schedule_dataframe(season: str, fallback_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    schedule_df = fetch_matches(season)
+    if schedule_df.empty and isinstance(fallback_df, pd.DataFrame):
+        return fallback_df
+    return schedule_df
+
+
 @st.cache_data(show_spinner=False)
 def _build_review_for_season(season: str) -> dict[str, object]:
     season_df = _load_season_dataframe(season)
-    return build_model_review(season_df, minimum_team_history=1)
+    schedule_df = _load_schedule_dataframe(season, fallback_df=season_df)
+    return build_model_review(season_df, minimum_team_history=1, schedule_df=schedule_df)
 
 
 def _safe_dataframe(df: pd.DataFrame) -> None:
@@ -73,6 +81,9 @@ st.title("Model Review")
 st.caption("Backtest storico: ogni partita viene analizzata usando solo i dati disponibili prima del match.")
 st.caption(
     "Serve per capire se `base_edge`, `adjusted_edge`, `draw_risk`, `upset_risk` e `confidence` stanno davvero aggiungendo valore."
+)
+st.caption(
+    "Il Predictor contestuale v2 e sperimentale; la calibrazione principale resta monitorata qui in Model Review."
 )
 
 if PUBLIC_DEMO_MODE:

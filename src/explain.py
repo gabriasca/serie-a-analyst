@@ -21,7 +21,7 @@ def build_prediction_explanation(prediction: dict[str, Any]) -> str:
         f"(fattore {away['form_factor']:.2f}). "
         f"Dal lato difensivo, valori piu bassi indicano una difesa piu solida: "
         f"casa {home['defense_strength']:.2f}, trasferta {away['defense_strength']:.2f}. "
-        f"Combinando questi fattori, il modello stima {prediction['expected_goals_home']:.2f} expected goals "
+        f"Combinando questi fattori, il modello stima {prediction['expected_goals_home']:.2f} gol attesi interni "
         f"per la squadra di casa e {prediction['expected_goals_away']:.2f} per la squadra in trasferta. "
         "Questa e una stima statistica basata sui dati disponibili, non una certezza."
     )

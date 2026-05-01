@@ -28,6 +28,14 @@ def _format_form_block(form: dict[str, object]) -> str:
         f"({form.get('points', 0)} pt, GF {form.get('goals_for', 0)}, GA {form.get('goals_against', 0)})"
     )
 
+
+def _load_report_dataframes(season: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    league_df = fetch_matches(season, competition_code=DEFAULT_COMPETITION_CODE)
+    schedule_df = fetch_matches(season)
+    if schedule_df.empty:
+        schedule_df = league_df
+    return league_df, schedule_df
+
 bootstrap_database()
 
 st.title("Report Partita")
@@ -54,15 +62,17 @@ away_options = [team for team in teams if team != home_team]
 away_team = st.selectbox("Squadra trasferta", away_options, index=0)
 
 if st.button("Genera report"):
+    league_df, schedule_df = _load_report_dataframes(selected_season)
     st.session_state["match_report_result"] = {
         "season": selected_season,
         "home_team": home_team,
         "away_team": away_team,
         "report": build_match_report_data(
-            fetch_matches(selected_season, competition_code=DEFAULT_COMPETITION_CODE),
+            league_df,
             selected_season,
             home_team,
             away_team,
+            schedule_df=schedule_df,
         ),
     }
 

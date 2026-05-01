@@ -485,16 +485,22 @@ def build_identity_summary(report: dict[str, Any]) -> str:
     return "\n".join(lines[:10])
 
 
-def build_team_identity_report(df: pd.DataFrame, team: str) -> dict[str, Any]:
+def build_team_identity_report(df: pd.DataFrame, team: str, schedule_df: pd.DataFrame | None = None) -> dict[str, Any]:
     prepared_df = _prepare_identity_df(df)
     if prepared_df.empty:
         return {"ok": False, "message": "La stagione selezionata non contiene partite utilizzabili.", "team": team}
     if team not in get_teams(prepared_df):
         return {"ok": False, "message": "La squadra selezionata non e presente nella stagione.", "team": team}
 
+    schedule_source_df = schedule_df if isinstance(schedule_df, pd.DataFrame) and not schedule_df.empty else prepared_df
     advanced_df = build_advanced_team_metrics(prepared_df)
     ratings_df = advanced_df.attrs.get("ratings_df")
-    context = build_team_profile_context(prepared_df, ratings_df=ratings_df, advanced_metrics_df=advanced_df)
+    context = build_team_profile_context(
+        prepared_df,
+        ratings_df=ratings_df,
+        advanced_metrics_df=advanced_df,
+        schedule_df=schedule_source_df,
+    )
     profile = build_team_profile_with_ratings(
         prepared_df,
         team,
@@ -536,6 +542,7 @@ def build_team_identity_report(df: pd.DataFrame, team: str) -> dict[str, Any]:
         "opponent_bands": opponent_bands,
         "home_away_shift": home_away_shift,
         "recent_trend": recent_trend,
+        "schedule_context": profile.get("schedule_context", {}),
         "volatility": volatility,
         "prudent_hypotheses": hypotheses,
         "data_quality_notes": data_quality_notes,

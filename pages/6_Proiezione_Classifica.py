@@ -23,6 +23,9 @@ if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)
 
 st.warning("Le proiezioni sono simulazioni statistiche basate sui dati disponibili, non certezze.")
+st.caption(
+    "Le simulazioni usano il predictor base. La correzione contestuale v2 e disponibile per singola partita nel Predictor."
+)
 
 seasons = list_seasons(competition_code=DEFAULT_COMPETITION_CODE)
 if not seasons:

@@ -389,6 +389,7 @@ def build_match_report_data(
     season: str,
     home_team: str,
     away_team: str,
+    schedule_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     if df.empty:
         return {"ok": False, "message": "La stagione selezionata non contiene dati sufficienti per creare un report."}
@@ -410,6 +411,8 @@ def build_match_report_data(
 
     home_split = _get_split_row(home_stats["home_away_split"], "Casa")
     away_split = _get_split_row(away_stats["home_away_split"], "Trasferta")
+
+    schedule_source_df = schedule_df if isinstance(schedule_df, pd.DataFrame) and not schedule_df.empty else df
 
     report_data: dict[str, Any] = {
         "ok": True,
@@ -443,7 +446,7 @@ def build_match_report_data(
             "note": "Il rating e usato come indicatore di forza storica/recente, non come certezza.",
         },
         "advanced_metrics": _build_advanced_comparison(df, home_team, away_team),
-        "schedule_context": build_match_schedule_context(df, home_team, away_team),
+        "schedule_context": build_match_schedule_context(schedule_source_df, home_team, away_team),
         "table_context": {
             "home_position": positions.get(home_team),
             "away_position": positions.get(away_team),

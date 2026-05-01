@@ -223,6 +223,7 @@ Uso attuale nell'app:
 - `Matchup Analysis` mostra calendario, riposo, carico e forma all competitions
 - `Report Partita` aggiunge una lettura sintetica di calendario/riposo
 - `Profilo Squadra` indica se la forma recente e solo campionato o multi-competizione
+- `Studio Squadra` mostra carico recente 7/14/30 giorni e confronto Serie A vs tutte le competizioni disponibili
 - `context_engine` usa il fattore calendario con peso prudente e non dominante
 - `Model Review` lo valuta tra i fattori, segnalando quando il campione e solo Serie A
 

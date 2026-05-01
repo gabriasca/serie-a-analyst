@@ -64,6 +64,22 @@ def _load_season_dataframe(season: str) -> pd.DataFrame:
     return season_df
 
 
+def _load_schedule_dataframe(season: str, fallback_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    schedule_df = fetch_matches(season)
+    if schedule_df.empty and isinstance(fallback_df, pd.DataFrame):
+        return fallback_df
+    return schedule_df
+
+
+def _format_form_block(form: dict[str, object]) -> str:
+    if not form or not form.get("matches"):
+        return "n/d"
+    return (
+        f"{form.get('form_string', '-')} "
+        f"({form.get('points', 0)} pt, GF {form.get('goals_for', 0)}, GA {form.get('goals_against', 0)})"
+    )
+
+
 def _render_result_block(title: str, block: dict[str, Any]) -> None:
     st.subheader(title)
     observed_col, internal_col, hypothesis_col = st.columns(3)
@@ -123,7 +139,8 @@ if not teams:
     st.stop()
 
 selected_team = st.selectbox("Seleziona squadra", teams)
-report = build_team_identity_report(season_df, selected_team)
+schedule_df = _load_schedule_dataframe(selected_season, fallback_df=season_df)
+report = build_team_identity_report(season_df, selected_team, schedule_df=schedule_df)
 if not report.get("ok"):
     st.warning(report.get("message", "Impossibile costruire lo studio squadra con i dati disponibili."))
     st.stop()
@@ -194,6 +211,33 @@ with recent_col:
         f"GF {recent_trend.get('recent_goals_for', 0)} | GA {recent_trend.get('recent_goals_against', 0)}"
     )
     st.caption(recent_trend.get("note", "Trend recente non disponibile."))
+
+st.subheader("Calendario e carico recente")
+schedule_context = report.get("schedule_context", {})
+if isinstance(schedule_context, dict) and schedule_context:
+    schedule_load = schedule_context.get("schedule_load", {})
+    form_comparison = schedule_context.get("form_comparison", {})
+    league_form = form_comparison.get("league_form", {})
+    all_comp_form = form_comparison.get("all_competition_form", {})
+    sched_col1, sched_col2, sched_col3, sched_col4 = st.columns(4)
+    sched_col1.metric("Riposo ultimo match", _format_number(schedule_load.get("rest_days"), digits=0, suffix=" gg"))
+    sched_col2.metric("Partite 7 gg", schedule_load.get("matches_last_7", 0))
+    sched_col3.metric("Partite 14 gg", schedule_load.get("matches_last_14", 0))
+    sched_col4.metric("Partite 30 gg", schedule_load.get("matches_last_30", 0))
+    load_col, comp_col = st.columns(2)
+    load_col.metric("Carico calendario", schedule_load.get("load_label", "n/d"))
+    comp_col.metric("Competizioni recenti", schedule_load.get("recent_competitions_count", 0))
+    st.write(f"Forma Serie A: {_format_form_block(league_form)}")
+    st.write(f"Forma tutte le competizioni disponibili: {_format_form_block(all_comp_form)}")
+    if not form_comparison.get("multi_competition_available", False):
+        st.info("Dati multi-competizione non ancora presenti.")
+    st.caption(
+        schedule_context.get("note")
+        or form_comparison.get("note")
+        or "Contesto calendario basato solo sulle partite disponibili."
+    )
+else:
+    st.caption("Dati calendario non disponibili per questa squadra.")
 
 st.subheader("Stabilita / volatilita")
 volatility = report.get("volatility", {})
