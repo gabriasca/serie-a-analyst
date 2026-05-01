@@ -170,8 +170,8 @@ if analysis:
         pred_col1.metric("Prob 1", f"{predictor_context.get('home_probability', 0.0) * 100:.1f}%")
         pred_col2.metric("Prob X", f"{predictor_context.get('draw_probability', 0.0) * 100:.1f}%")
         pred_col3.metric("Prob 2", f"{predictor_context.get('away_probability', 0.0) * 100:.1f}%")
-        pred_col4.metric("xG predictor casa", f"{predictor_context.get('home_xg', 0.0):.2f}")
-        pred_col5.metric("xG predictor trasferta", f"{predictor_context.get('away_xg', 0.0):.2f}")
+        pred_col4.metric("Gol attesi modello casa", f"{predictor_context.get('home_model_goals', 0.0):.2f}")
+        pred_col5.metric("Gol attesi modello trasferta", f"{predictor_context.get('away_model_goals', 0.0):.2f}")
         st.write(
             f"Risultato piu probabile: **{analysis['home_team']} {predictor_context.get('most_likely_score')} {analysis['away_team']}**"
         )

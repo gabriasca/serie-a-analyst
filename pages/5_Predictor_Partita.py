@@ -82,14 +82,7 @@ if st.button("Calcola previsione"):
         st.warning(prediction["message"])
         st.stop()
 
-    try:
-        matchup_analysis = build_matchup_analysis(season_df, home_team, away_team, schedule_df=schedule_df)
-    except Exception as exc:  # pragma: no cover - UI safety net for public runtime
-        matchup_analysis = {
-            "ok": False,
-            "message": f"Lettura matchup non disponibile in questo ambiente: {exc}",
-            "warnings": ["La previsione contestuale resta vicina alla baseline per un errore nel layer matchup."],
-        }
+    matchup_analysis = build_matchup_analysis(season_df, home_team, away_team, schedule_df=schedule_df)
 
     contextual_forecast = build_contextual_forecast(prediction, matchup_analysis=matchup_analysis)
 
@@ -101,7 +94,7 @@ if st.button("Calcola previsione"):
     col3.metric("1", f"{probs['1'] * 100:.1f}%")
     col4.metric("X", f"{probs['X'] * 100:.1f}%")
     col5.metric("2", f"{probs['2'] * 100:.1f}%")
-    st.caption("Questi sono gol attesi dal modello Poisson interno, non xG reali shot-by-shot.")
+    st.caption("Questi sono gol attesi dal modello Poisson interno, non metriche shot-by-shot.")
 
     st.subheader("Risultato piu probabile")
     st.write(f"{home_team} {prediction['most_likely_score']} {away_team}")

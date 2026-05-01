@@ -440,9 +440,9 @@ def build_predictor_context(
     home_probability = float(predictor["probabilities"]["1"])
     draw_probability = float(predictor["probabilities"]["X"])
     away_probability = float(predictor["probabilities"]["2"])
-    home_xg = float(predictor["expected_goals_home"])
-    away_xg = float(predictor["expected_goals_away"])
-    xg_gap = home_xg - away_xg
+    home_model_goals = float(predictor["expected_goals_home"])
+    away_model_goals = float(predictor["expected_goals_away"])
+    model_goals_gap = home_model_goals - away_model_goals
     home_factors = predictor.get("factors", {}).get("home_team", {})
     away_factors = predictor.get("factors", {}).get("away_team", {})
     league = predictor.get("factors", {}).get("league", {})
@@ -450,12 +450,12 @@ def build_predictor_context(
     bullets: list[str] = []
     if float(league.get("home_advantage", 1.0)) > 1.05:
         bullets.append(f"Il predictor incorpora un vantaggio casa di lega che spinge leggermente {home_team} nei contesti equilibrati.")
-    if xg_gap > 0.30:
+    if model_goals_gap > 0.30:
         bullets.append(f"Il modello vede piu produzione attesa per {home_team}, quindi le probabilita si inclinano verso la squadra di casa.")
-    elif xg_gap < -0.30:
+    elif model_goals_gap < -0.30:
         bullets.append(f"Il modello riconosce piu produzione attesa per {away_team}, nonostante il fattore campo.")
     else:
-        bullets.append("Gli expected goals del predictor sono vicini, quindi il modello legge una partita piu aperta del normale.")
+        bullets.append("I gol attesi interni del predictor sono vicini, quindi il modello legge una partita piu aperta del normale.")
 
     home_form_factor = _safe_float(home_factors.get("form_factor")) or 1.0
     away_form_factor = _safe_float(away_factors.get("form_factor")) or 1.0
@@ -476,9 +476,9 @@ def build_predictor_context(
         "home_probability": home_probability,
         "draw_probability": draw_probability,
         "away_probability": away_probability,
-        "home_xg": home_xg,
-        "away_xg": away_xg,
-        "xg_gap": xg_gap,
+        "home_model_goals": home_model_goals,
+        "away_model_goals": away_model_goals,
+        "model_goals_gap": model_goals_gap,
         "most_likely_score": predictor.get("most_likely_score"),
         "top_scores": predictor.get("top_scorelines", [])[:3],
         "bullets": bullets[:4],
@@ -589,8 +589,10 @@ def build_matchup_analysis(
     comparison_rows = compare_advanced_metrics(home_metrics, away_metrics, home_team=home_team, away_team=away_team)
     mismatches = identify_key_mismatches(home_profile, away_profile, predictor_context=predictor_context, comparison_rows=comparison_rows)
     style_advantage = build_style_advantage(home_profile, away_profile, predictor)
-    schedule_source_df = schedule_df if isinstance(schedule_df, pd.DataFrame) and not schedule_df.empty else prepared_df
-    schedule_context = build_match_schedule_context(schedule_source_df, home_team, away_team)
+    effective_schedule_df = prepared_df
+    if isinstance(schedule_df, pd.DataFrame) and not schedule_df.empty:
+        effective_schedule_df = schedule_df
+    schedule_context = build_match_schedule_context(effective_schedule_df, home_team, away_team)
     context_engine = build_context_adjusted_edge(
         home_profile,
         away_profile,
