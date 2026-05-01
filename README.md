@@ -391,6 +391,7 @@ Comportamento:
 - legge la URL da `CLUBELO_RATINGS_URL` se presente
 - altrimenti usa la pagina Italy ufficiale di ClubElo come default
 - normalizza i nomi squadra con mapping prudente
+- l'aggiornamento ClubElo e best-effort: se la fonte esterna non e raggiungibile, viene mantenuto il seed rating esistente
 - salva solo il seed CSV
 - non modifica direttamente il database locale
 

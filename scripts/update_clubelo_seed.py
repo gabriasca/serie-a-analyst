@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import unicodedata
 import urllib.request
@@ -19,6 +20,7 @@ from src.config import CLUBELO_RATINGS_URL, SEED_CSV_PATH, TEAM_NAME_ALIASES, TE
 
 DEFAULT_SOURCE_NAME = "ClubElo"
 DEFAULT_RATING_TYPE = "elo"
+STRICT_UPDATE_ENV = "CLUBELO_STRICT_UPDATE"
 DEFAULT_SERIE_A_TEAMS = [
     "Atalanta",
     "Bologna",
@@ -229,25 +231,82 @@ def build_team_ratings_seed(url: str = CLUBELO_RATINGS_URL) -> tuple[pd.DataFram
     return seed_df, warnings
 
 
+def _existing_seed_row_count() -> int:
+    if not TEAM_RATINGS_SEED_PATH.exists() or TEAM_RATINGS_SEED_PATH.stat().st_size <= 0:
+        return 0
+    try:
+        existing_df = pd.read_csv(TEAM_RATINGS_SEED_PATH)
+    except Exception:
+        return 0
+    if existing_df.empty or "rating_value" not in existing_df.columns:
+        return 0
+    valid_df = existing_df.dropna(subset=["rating_value"])
+    return int(len(valid_df))
+
+
 def update_team_ratings_seed(url: str = CLUBELO_RATINGS_URL) -> dict[str, object]:
     seed_df, warnings = build_team_ratings_seed(url=url)
     if seed_df.empty:
         raise ValueError("Nessun rating valido trovato: impossibile aggiornare il seed ClubElo.")
+
+    existing_rows = _existing_seed_row_count()
+    if existing_rows > 0 and len(seed_df) < existing_rows:
+        warnings.append(
+            "Warning: nuovo seed ClubElo meno completo del seed esistente; file esistente preservato."
+        )
+        return {
+            "url": url,
+            "rows": existing_rows,
+            "new_rows": int(len(seed_df)),
+            "path": str(TEAM_RATINGS_SEED_PATH),
+            "warnings": warnings,
+            "updated": False,
+            "reason": "incomplete_new_seed",
+        }
 
     TEAM_RATINGS_SEED_PATH.parent.mkdir(parents=True, exist_ok=True)
     seed_df.to_csv(TEAM_RATINGS_SEED_PATH, index=False)
     return {
         "url": url,
         "rows": int(len(seed_df)),
+        "new_rows": int(len(seed_df)),
         "path": str(TEAM_RATINGS_SEED_PATH),
         "warnings": warnings,
+        "updated": True,
+        "reason": "updated",
     }
 
 
 if __name__ == "__main__":
-    result = update_team_ratings_seed()
-    print(f"Seed rating aggiornato da: {result['url']}")
-    print(f"Righe esportate: {result['rows']}")
+    strict_update = os.getenv(STRICT_UPDATE_ENV, "").strip() == "1"
+    try:
+        result = update_team_ratings_seed()
+    except Exception as exc:
+        fallback_exists = TEAM_RATINGS_SEED_PATH.exists() and TEAM_RATINGS_SEED_PATH.stat().st_size > 0
+        if not strict_update and fallback_exists:
+            print("Warning: ClubElo update failed, keeping existing team_ratings_seed.csv")
+            print(f"Cause: {exc}")
+            sys.exit(0)
+        if strict_update and fallback_exists:
+            print("Error: ClubElo strict update failed; existing team_ratings_seed.csv was not modified.")
+            print(f"Cause: {exc}")
+            sys.exit(1)
+        print("Error: ClubElo update failed and no existing team_ratings_seed.csv fallback is available.")
+        print(f"Cause: {exc}")
+        sys.exit(1)
+
+    if not result.get("updated") and strict_update:
+        print("Error: ClubElo strict update enabled and seed was not updated.")
+        print(f"Reason: {result.get('reason')}")
+        sys.exit(1)
+
+    if result.get("updated"):
+        print(f"Seed rating aggiornato da: {result['url']}")
+        print(f"Righe esportate: {result['rows']}")
+    else:
+        print("Warning: ClubElo update skipped, keeping existing team_ratings_seed.csv")
+        print(f"Righe nuovo seed valide: {result.get('new_rows', 0)}")
+        print(f"Righe seed esistente preservate: {result['rows']}")
     print(f"Output: {result['path']}")
     for warning in result["warnings"]:
         print(warning)
