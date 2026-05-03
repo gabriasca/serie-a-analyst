@@ -258,6 +258,8 @@ La `Model Review` include anche un confronto tra predictor base Poisson e Predic
 - confronta accuracy 1/X/2, favorito che non perde e Brier score
 - mostra quando il v2 cambia pick, migliora o peggiora rispetto alla baseline
 - analizza bucket di `confidence`, `draw_risk` e `upset_risk`
+- permette di scegliere campione, warmup minimo per squadra e numero massimo di partite analizzate
+- mostra affidabilita del campione, copertura predictor/v2 e avvisi su bucket piccoli o v2 troppo neutro
 - non modifica `src/predictor.py` e non modifica la `Proiezione Classifica`
 
 ## Limiti dell'MVP

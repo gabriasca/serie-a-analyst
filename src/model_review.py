@@ -324,23 +324,97 @@ def _factor_help_label(weighted_impact: float, actual_sign: int) -> str:
     return "hurt"
 
 
+def _select_backtest_indices(
+    prepared_df: pd.DataFrame,
+    warmup_matches: int = 1,
+    sample_mode: str = "after_warmup",
+    max_matches: int | None = None,
+) -> tuple[list[int], dict[str, Any]]:
+    if prepared_df.empty:
+        return [], {
+            "sample_mode": sample_mode,
+            "warmup_matches": int(warmup_matches),
+            "max_matches": max_matches,
+            "season_match_count": 0,
+            "candidate_matches": 0,
+            "selected_matches": 0,
+        }
+
+    warmup = max(int(warmup_matches or 0), 0)
+    candidate_indices: list[int] = []
+    team_match_counts: dict[str, int] = {}
+
+    for idx, row in prepared_df.iterrows():
+        home_team = str(row.get("home_team") or "")
+        away_team = str(row.get("away_team") or "")
+        home_history_count = team_match_counts.get(home_team, 0)
+        away_history_count = team_match_counts.get(away_team, 0)
+        if home_history_count >= warmup and away_history_count >= warmup:
+            candidate_indices.append(int(idx))
+        team_match_counts[home_team] = home_history_count + 1
+        team_match_counts[away_team] = away_history_count + 1
+
+    target_max = int(max_matches) if max_matches is not None and max_matches > 0 else None
+    normalized_mode = sample_mode or "after_warmup"
+    if normalized_mode == "last":
+        selected_indices = candidate_indices[-target_max:] if target_max is not None else candidate_indices
+    elif normalized_mode == "all":
+        selected_indices = candidate_indices
+    else:
+        selected_indices = candidate_indices[:target_max] if target_max is not None else candidate_indices
+
+    metadata = {
+        "sample_mode": normalized_mode,
+        "warmup_matches": warmup,
+        "max_matches": target_max,
+        "season_match_count": int(len(prepared_df)),
+        "candidate_matches": int(len(candidate_indices)),
+        "selected_matches": int(len(selected_indices)),
+        "first_selected_date": None,
+        "last_selected_date": None,
+    }
+    if selected_indices:
+        selected_dates = pd.to_datetime(prepared_df.loc[selected_indices, "match_date"], errors="coerce").dropna()
+        if not selected_dates.empty:
+            metadata["first_selected_date"] = selected_dates.min().strftime("%Y-%m-%d")
+            metadata["last_selected_date"] = selected_dates.max().strftime("%Y-%m-%d")
+    return selected_indices, metadata
+
+
 def build_backtest_rows(
     season_df: pd.DataFrame,
     minimum_team_history: int = 1,
     schedule_df: pd.DataFrame | None = None,
     max_matches: int | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    sample_mode: str = "after_warmup",
+    warmup_matches: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     prepared_df = prepare_matches_dataframe(season_df)
     if prepared_df.empty:
-        return pd.DataFrame(), pd.DataFrame()
-    target_max_matches = int(max_matches) if max_matches is not None and max_matches > 0 else None
+        return pd.DataFrame(), pd.DataFrame(), {
+            "sample_mode": sample_mode,
+            "warmup_matches": int(warmup_matches if warmup_matches is not None else minimum_team_history),
+            "max_matches": max_matches,
+            "season_match_count": 0,
+            "candidate_matches": 0,
+            "selected_matches": 0,
+        }
+
+    effective_warmup = int(warmup_matches if warmup_matches is not None else minimum_team_history)
+    selected_indices, sample_metadata = _select_backtest_indices(
+        prepared_df,
+        warmup_matches=effective_warmup,
+        sample_mode=sample_mode,
+        max_matches=max_matches,
+    )
 
     schedule_prepared_df = _prepare_optional_schedule_df(schedule_df, prepared_df)
     ratings_history_df = _load_ratings_history()
     rows: list[dict[str, Any]] = []
     factor_rows: list[dict[str, Any]] = []
 
-    for idx, row in prepared_df.iterrows():
+    for idx in selected_indices:
+        row = prepared_df.loc[idx]
         historical_df = prepared_df.iloc[:idx].copy()
         if historical_df.empty:
             continue
@@ -349,7 +423,7 @@ def build_backtest_rows(
         away_team = str(row["away_team"])
         home_history_count = int(((historical_df["home_team"] == home_team) | (historical_df["away_team"] == home_team)).sum())
         away_history_count = int(((historical_df["home_team"] == away_team) | (historical_df["away_team"] == away_team)).sum())
-        if home_history_count < minimum_team_history or away_history_count < minimum_team_history:
+        if home_history_count < effective_warmup or away_history_count < effective_warmup:
             continue
 
         historical_teams = sorted(set(historical_df["home_team"].astype(str).tolist()) | set(historical_df["away_team"].astype(str).tolist()))
@@ -438,6 +512,12 @@ def build_backtest_rows(
             if base_probabilities and v2_probabilities
             else None
         )
+        mean_abs_probability_shift = round(probability_shift / 3.0, 6) if probability_shift is not None else None
+        max_probability_shift = (
+            round(max(abs(v2_probabilities[key] - base_probabilities[key]) for key in ["1", "X", "2"]), 6)
+            if base_probabilities and v2_probabilities
+            else None
+        )
         brier_delta = round(v2_brier - base_brier, 6) if base_brier is not None and v2_brier is not None else None
         v2_changed_pick = bool(base_pick and v2_pick and base_pick != v2_pick)
         v2_increased_draw = bool(draw_delta is not None and draw_delta > 0.01)
@@ -509,6 +589,9 @@ def build_backtest_rows(
                 "v2_draw_increase_correct": bool(v2_increased_draw and actual_outcome == "X"),
                 "v2_draw_increase_wrong": bool(v2_increased_draw and actual_outcome != "X"),
                 "probability_shift": probability_shift,
+                "mean_abs_probability_shift": mean_abs_probability_shift,
+                "max_probability_shift": max_probability_shift,
+                "v2_shift_at_least_2pp": bool(max_probability_shift is not None and max_probability_shift >= 0.02),
                 "v2_overcorrected": v2_overcorrected,
                 "base_score": base_score,
                 "adjusted_score": adjusted_score,
@@ -562,12 +645,10 @@ def build_backtest_rows(
                 }
             )
 
-        if target_max_matches is not None and len(rows) >= target_max_matches:
-            break
-
     backtest_df = pd.DataFrame(rows)
     factors_df = pd.DataFrame(factor_rows)
-    return backtest_df, factors_df
+    sample_metadata["analyzed_matches"] = int(len(backtest_df))
+    return backtest_df, factors_df, sample_metadata
 
 
 def build_general_review(backtest_df: pd.DataFrame) -> dict[str, Any]:
@@ -699,6 +780,73 @@ def build_bucket_review(backtest_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     }
 
 
+def build_sample_reliability_report(
+    backtest_df: pd.DataFrame,
+    sample_metadata: dict[str, Any],
+    predictor_v2_review: dict[str, Any],
+) -> dict[str, Any]:
+    analyzed_matches = int(len(backtest_df))
+    predictor_coverage_pct = (
+        round(float(backtest_df["predictor_available"].fillna(False).mean() * 100.0), 1)
+        if analyzed_matches and "predictor_available" in backtest_df.columns
+        else 0.0
+    )
+    v2_available_df = _predictor_v2_available_df(backtest_df)
+    v2_coverage_pct = round(float(len(v2_available_df) / max(analyzed_matches, 1) * 100.0), 1) if analyzed_matches else 0.0
+
+    def _counts(column: str) -> dict[str, int]:
+        if backtest_df.empty or column not in backtest_df.columns:
+            return {"basso": 0, "medio": 0, "alto": 0}
+        counts = backtest_df[column].value_counts().to_dict()
+        return {bucket: int(counts.get(bucket, 0)) for bucket in ["basso", "medio", "alto"]}
+
+    confidence_counts = _counts("confidence_bucket")
+    draw_counts = _counts("draw_risk_bucket")
+    upset_counts = _counts("upset_risk_bucket")
+    v2_general = predictor_v2_review.get("general_review", {}) if isinstance(predictor_v2_review, dict) else {}
+    v2_matches = int(v2_general.get("matches_analyzed", 0) or 0)
+    v2_changed_pick_pct = (
+        round(float(v2_general.get("v2_changed_pick_total", 0) or 0) / max(v2_matches, 1) * 100.0, 1)
+        if v2_matches
+        else 0.0
+    )
+
+    warnings: list[str] = []
+    if analyzed_matches < 50:
+        warnings.append("Campione piccolo: meno di 50 partite analizzate.")
+    if predictor_coverage_pct < 70.0:
+        warnings.append("Copertura predictor limitata: meno del 70% delle partite analizzate ha probabilita base disponibili.")
+    for label, counts in [
+        ("confidence", confidence_counts),
+        ("draw_risk", draw_counts),
+        ("upset_risk", upset_counts),
+    ]:
+        small_buckets = [bucket for bucket, count in counts.items() if 0 < count < 20]
+        if small_buckets:
+            warnings.append(f"Bucket {label} da leggere con prudenza: campione < 20 per {', '.join(small_buckets)}.")
+    if v2_matches and v2_changed_pick_pct < 5.0:
+        warnings.append("v2 molto prudente / quasi neutro: cambia meno del 5% delle pick.")
+
+    return {
+        "sample_mode": sample_metadata.get("sample_mode"),
+        "warmup_matches": int(sample_metadata.get("warmup_matches", 0) or 0),
+        "max_matches": sample_metadata.get("max_matches"),
+        "season_match_count": int(sample_metadata.get("season_match_count", 0) or 0),
+        "candidate_matches": int(sample_metadata.get("candidate_matches", 0) or 0),
+        "selected_matches": int(sample_metadata.get("selected_matches", 0) or 0),
+        "analyzed_matches": analyzed_matches,
+        "first_selected_date": sample_metadata.get("first_selected_date"),
+        "last_selected_date": sample_metadata.get("last_selected_date"),
+        "predictor_coverage_pct": predictor_coverage_pct,
+        "v2_coverage_pct": v2_coverage_pct,
+        "confidence_bucket_counts": confidence_counts,
+        "draw_risk_bucket_counts": draw_counts,
+        "upset_risk_bucket_counts": upset_counts,
+        "v2_changed_pick_pct": v2_changed_pick_pct,
+        "warnings": warnings,
+    }
+
+
 def _predictor_v2_available_df(backtest_df: pd.DataFrame) -> pd.DataFrame:
     if backtest_df.empty:
         return pd.DataFrame()
@@ -722,10 +870,15 @@ def build_predictor_v2_general_review(backtest_df: pd.DataFrame) -> dict[str, An
             "v2_brier": None,
             "brier_delta": None,
             "v2_changed_pick_total": 0,
+            "v2_changed_pick_pct": 0.0,
             "v2_changed_pick_correct": 0,
             "v2_increased_draw_total": 0,
             "v2_increased_draw_correct": 0,
             "v2_increased_draw_wrong": 0,
+            "v2_shift_at_least_2pp_total": 0,
+            "v2_shift_at_least_2pp_pct": 0.0,
+            "mean_abs_probability_shift_pp": 0.0,
+            "max_probability_shift_pp": 0.0,
             "v2_overcorrected_total": 0,
         }
 
@@ -733,6 +886,7 @@ def build_predictor_v2_general_review(backtest_df: pd.DataFrame) -> dict[str, An
     v2_favorite_mask = review_df["v2_probability_favorite"] != "none"
     changed_mask = review_df["v2_changed_pick"].fillna(False)
     draw_increase_mask = review_df["v2_increased_draw"].fillna(False)
+    shift_2pp_mask = review_df["v2_shift_at_least_2pp"].fillna(False)
     base_brier = float(review_df["base_brier"].mean())
     v2_brier = float(review_df["v2_brier"].mean())
 
@@ -756,10 +910,15 @@ def build_predictor_v2_general_review(backtest_df: pd.DataFrame) -> dict[str, An
         "v2_brier": round(v2_brier, 4),
         "brier_delta": round(v2_brier - base_brier, 4),
         "v2_changed_pick_total": int(changed_mask.sum()),
+        "v2_changed_pick_pct": round(float(changed_mask.mean() * 100.0), 1),
         "v2_changed_pick_correct": int(review_df.loc[changed_mask, "v2_change_correct"].fillna(False).sum()),
         "v2_increased_draw_total": int(draw_increase_mask.sum()),
         "v2_increased_draw_correct": int(review_df.loc[draw_increase_mask, "v2_draw_increase_correct"].fillna(False).sum()),
         "v2_increased_draw_wrong": int(review_df.loc[draw_increase_mask, "v2_draw_increase_wrong"].fillna(False).sum()),
+        "v2_shift_at_least_2pp_total": int(shift_2pp_mask.sum()),
+        "v2_shift_at_least_2pp_pct": round(float(shift_2pp_mask.mean() * 100.0), 1),
+        "mean_abs_probability_shift_pp": round(float(review_df["mean_abs_probability_shift"].fillna(0.0).mean() * 100.0), 2),
+        "max_probability_shift_pp": round(float(review_df["max_probability_shift"].fillna(0.0).max() * 100.0), 2),
         "v2_overcorrected_total": int(review_df["v2_overcorrected"].fillna(False).sum()),
     }
 
@@ -860,6 +1019,13 @@ def build_predictor_v2_conclusions(
     base_accuracy = float(general_review.get("base_accuracy_pct", 0.0) or 0.0)
     v2_accuracy = float(general_review.get("v2_accuracy_pct", 0.0) or 0.0)
     brier_delta = general_review.get("brier_delta")
+    matches_analyzed = int(general_review.get("matches_analyzed", 0) or 0)
+    changed_pick_pct = float(general_review.get("v2_changed_pick_pct", 0.0) or 0.0)
+    shift_2pp_pct = float(general_review.get("v2_shift_at_least_2pp_pct", 0.0) or 0.0)
+
+    if matches_analyzed < 50:
+        conclusions.append("Campione insufficiente o piccolo: la review v2 va letta come indicazione preliminare.")
+
     if v2_accuracy >= base_accuracy + 3.0:
         conclusions.append(f"Il v2 migliora l'accuracy 1/X/2 rispetto al base ({v2_accuracy:.1f}% vs {base_accuracy:.1f}%).")
     elif v2_accuracy <= base_accuracy - 3.0:
@@ -873,6 +1039,13 @@ def build_predictor_v2_conclusions(
         conclusions.append(f"Brier score peggiore per il v2: delta {brier_delta:.4f}; serve ulteriore calibrazione.")
     else:
         conclusions.append("Brier score sostanzialmente stabile: il v2 non altera molto la qualita probabilistica media.")
+
+    if changed_pick_pct < 5.0 and shift_2pp_pct < 15.0:
+        conclusions.append(
+            "Il v2 e molto neutro: cambia poche pick e raramente sposta le probabilita di almeno 2 punti percentuali."
+        )
+    elif changed_pick_pct < 5.0:
+        conclusions.append("Il v2 modifica alcune probabilita, ma quasi mai abbastanza da cambiare la pick principale.")
 
     equilibrate_df = review_df.loc[(review_df["base_probability_1"] - review_df["base_probability_2"]).abs() < 0.08]
     if not equilibrate_df.empty:
@@ -910,8 +1083,16 @@ def build_predictor_v2_conclusions(
         elif not high_conf.empty and not low_conf.empty:
             conclusions.append("Confidence ancora da monitorare: non separa sempre i match probabilisticamente migliori.")
 
-    if brier_delta is not None and brier_delta < -0.005 and v2_accuracy >= base_accuracy:
+    if (
+        matches_analyzed >= 50
+        and brier_delta is not None
+        and brier_delta < -0.005
+        and v2_accuracy >= base_accuracy
+        and changed_pick_pct >= 5.0
+    ):
         conclusions.append("Raccomandazione: considerare il v2 in modo selettivo, ma non usarlo ancora per Proiezione Classifica.")
+    elif brier_delta is not None and brier_delta > 0.005 and v2_accuracy < base_accuracy:
+        conclusions.append("Raccomandazione: v2 peggiorativo nel campione corrente, quindi va tenuto solo come lettura qualitativa.")
     else:
         conclusions.append("Raccomandazione: mantenere il v2 come lettura interpretativa finche il vantaggio sul base non e stabile.")
 
@@ -1202,20 +1383,25 @@ def build_model_review(
     minimum_team_history: int = 1,
     schedule_df: pd.DataFrame | None = None,
     max_matches: int | None = None,
+    sample_mode: str = "after_warmup",
+    warmup_matches: int | None = None,
 ) -> dict[str, Any]:
     schedule_source_df = schedule_df if isinstance(schedule_df, pd.DataFrame) and not schedule_df.empty else season_df
     ratings_audit = build_ratings_audit(season_df)
     schedule_audit = build_schedule_data_audit(schedule_source_df)
-    backtest_df, factors_df = build_backtest_rows(
+    backtest_df, factors_df, sample_metadata = build_backtest_rows(
         season_df,
         minimum_team_history=minimum_team_history,
         schedule_df=schedule_source_df,
         max_matches=max_matches,
+        sample_mode=sample_mode,
+        warmup_matches=warmup_matches,
     )
     general_review = build_general_review(backtest_df)
     diagnostic_tables = build_diagnostic_tables(backtest_df)
     bucket_review = build_bucket_review(backtest_df)
     predictor_v2_review = build_predictor_v2_review(backtest_df)
+    sample_reliability = build_sample_reliability_report(backtest_df, sample_metadata, predictor_v2_review)
     factor_review_df = build_factor_review(factors_df, ratings_audit=ratings_audit, schedule_audit=schedule_audit)
     conclusions = build_review_conclusions(backtest_df, factor_review_df, general_review)
     calibration_guidance = build_calibration_guidance(
@@ -1234,6 +1420,7 @@ def build_model_review(
         "factors_df": factors_df,
         "ratings_audit": ratings_audit,
         "schedule_audit": schedule_audit,
+        "sample_reliability": sample_reliability,
         "general_review": general_review,
         "diagnostic_tables": diagnostic_tables,
         "bucket_review": bucket_review,

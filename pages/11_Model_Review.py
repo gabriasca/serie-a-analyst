@@ -40,10 +40,22 @@ def _load_schedule_dataframe(season: str, fallback_df: pd.DataFrame | None = Non
 
 
 @st.cache_data(show_spinner=False)
-def _build_review_for_season(season: str, max_matches: int | None) -> dict[str, object]:
+def _build_review_for_season(
+    season: str,
+    sample_mode: str,
+    max_matches: int | None,
+    warmup_matches: int,
+) -> dict[str, object]:
     season_df = _load_season_dataframe(season)
     schedule_df = _load_schedule_dataframe(season, fallback_df=season_df)
-    return build_model_review(season_df, minimum_team_history=1, schedule_df=schedule_df, max_matches=max_matches)
+    return build_model_review(
+        season_df,
+        minimum_team_history=0,
+        schedule_df=schedule_df,
+        max_matches=max_matches,
+        sample_mode=sample_mode,
+        warmup_matches=warmup_matches,
+    )
 
 
 def _safe_dataframe(df: pd.DataFrame) -> None:
@@ -79,6 +91,25 @@ def _format_optional_float(value: object, digits: int = 4) -> str:
     return f"{float(value):.{digits}f}"
 
 
+def _bucket_count_table(sample_reliability: dict[str, object]) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for label, key in [
+        ("Confidence", "confidence_bucket_counts"),
+        ("Draw risk", "draw_risk_bucket_counts"),
+        ("Upset risk", "upset_risk_bucket_counts"),
+    ]:
+        counts = sample_reliability.get(key, {}) if isinstance(sample_reliability, dict) else {}
+        rows.append(
+            {
+                "Bucket": label,
+                "Basso": int(counts.get("basso", 0) if isinstance(counts, dict) else 0),
+                "Medio": int(counts.get("medio", 0) if isinstance(counts, dict) else 0),
+                "Alto": int(counts.get("alto", 0) if isinstance(counts, dict) else 0),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 st.set_page_config(page_title=f"{APP_TITLE} | Model Review", layout="wide")
 
 bootstrap_database()
@@ -104,21 +135,46 @@ if not seasons:
     st.stop()
 
 selected_season = st.selectbox("Seleziona stagione", seasons)
+sample_mode_options = {
+    "Prime N partite": "first",
+    "Ultime N partite": "last",
+    "Tutta la stagione": "all",
+    "Dopo warmup": "after_warmup",
+}
+selected_sample_label = st.selectbox("Campione backtest", list(sample_mode_options.keys()), index=3)
+selected_sample_mode = sample_mode_options[selected_sample_label]
 max_match_options = {
     "30 partite": 30,
     "60 partite": 60,
     "100 partite": 100,
+    "150 partite": 150,
     "Tutta la stagione": None,
 }
-selected_max_label = st.selectbox("Numero massimo partite nel backtest", list(max_match_options.keys()), index=1)
+selected_max_label = st.selectbox("Numero massimo partite nel backtest", list(max_match_options.keys()), index=2)
 selected_max_matches = max_match_options[selected_max_label]
+warmup_options = {
+    "nessuno": 0,
+    "almeno 3 partite per squadra": 3,
+    "almeno 5 partite per squadra": 5,
+    "almeno 8 partite per squadra": 8,
+    "almeno 10 partite per squadra": 10,
+}
+selected_warmup_label = st.selectbox("Warmup storico", list(warmup_options.keys()), index=2)
+selected_warmup_matches = warmup_options[selected_warmup_label]
 
 if st.button("Esegui model review"):
     with st.spinner("Sto costruendo il backtest storico partita per partita..."):
         st.session_state["model_review_result"] = {
             "season": selected_season,
+            "sample_mode": selected_sample_mode,
             "max_matches": selected_max_matches,
-            "review": _build_review_for_season(selected_season, selected_max_matches),
+            "warmup_matches": selected_warmup_matches,
+            "review": _build_review_for_season(
+                selected_season,
+                selected_sample_mode,
+                selected_max_matches,
+                selected_warmup_matches,
+            ),
         }
 
 review: dict[str, object] | None = None
@@ -128,8 +184,12 @@ if not stored_result:
 else:
     if stored_result.get("season") != selected_season:
         st.info("Premi di nuovo 'Esegui model review' per aggiornare il backtest con la stagione corrente.")
+    elif stored_result.get("sample_mode") != selected_sample_mode:
+        st.info("Premi di nuovo 'Esegui model review' per aggiornare il backtest con il campione corrente.")
     elif stored_result.get("max_matches") != selected_max_matches:
         st.info("Premi di nuovo 'Esegui model review' per aggiornare il backtest con il limite partite corrente.")
+    elif stored_result.get("warmup_matches") != selected_warmup_matches:
+        st.info("Premi di nuovo 'Esegui model review' per aggiornare il backtest con il warmup corrente.")
     else:
         candidate_review = stored_result.get("review") or {}
         if not candidate_review.get("ok"):
@@ -141,6 +201,7 @@ if review:
     backtest_df = review["backtest_df"]
     ratings_audit = review.get("ratings_audit", {})
     schedule_audit = review.get("schedule_audit", {})
+    sample_reliability = review.get("sample_reliability", {})
     general_review = review["general_review"]
     diagnostic_tables = review["diagnostic_tables"]
     bucket_review = review["bucket_review"]
@@ -155,6 +216,24 @@ if review:
     predictor_coverage = 0.0
     if not backtest_df.empty and "predictor_available" in backtest_df.columns:
         predictor_coverage = float(backtest_df["predictor_available"].fillna(False).mean() * 100.0)
+
+    st.subheader("Affidabilita del campione")
+    rel_col1, rel_col2, rel_col3, rel_col4, rel_col5 = st.columns(5)
+    rel_col1.metric("Partite candidate", int(sample_reliability.get("candidate_matches", 0) or 0))
+    rel_col2.metric("Partite selezionate", int(sample_reliability.get("selected_matches", 0) or 0))
+    rel_col3.metric("Partite analizzate", int(sample_reliability.get("analyzed_matches", 0) or 0))
+    rel_col4.metric("Copertura predictor", f"{float(sample_reliability.get('predictor_coverage_pct', 0.0) or 0.0):.1f}%")
+    rel_col5.metric("Copertura v2", f"{float(sample_reliability.get('v2_coverage_pct', 0.0) or 0.0):.1f}%")
+    st.caption(
+        f"Campione: {selected_sample_label}; warmup: {selected_warmup_label}; "
+        f"date selezionate {sample_reliability.get('first_selected_date') or 'n/d'} - "
+        f"{sample_reliability.get('last_selected_date') or 'n/d'}."
+    )
+    bucket_count_df = _bucket_count_table(sample_reliability)
+    if not bucket_count_df.empty:
+        _safe_dataframe(bucket_count_df)
+    for warning in sample_reliability.get("warnings", []):
+        st.warning(warning)
 
     st.subheader("Metriche generali")
     metric_col1, metric_col2, metric_col3 = st.columns(3)
@@ -300,6 +379,14 @@ if review:
         change_col2.metric("Cambi corretti", int(v2_general.get("v2_changed_pick_correct", 0) or 0))
         change_col3.metric("X aumentata e pari", int(v2_general.get("v2_increased_draw_correct", 0) or 0))
         change_col4.metric("X aumentata e sbagliata", int(v2_general.get("v2_increased_draw_wrong", 0) or 0))
+
+        shift_col1, shift_col2, shift_col3, shift_col4 = st.columns(4)
+        shift_col1.metric("Pick cambiate %", f"{float(v2_general.get('v2_changed_pick_pct', 0.0) or 0.0):.1f}%")
+        shift_col2.metric("Shift >= 2 pp", f"{float(v2_general.get('v2_shift_at_least_2pp_pct', 0.0) or 0.0):.1f}%")
+        shift_col3.metric("Shift medio assoluto", f"{float(v2_general.get('mean_abs_probability_shift_pp', 0.0) or 0.0):.2f} pp")
+        shift_col4.metric("Shift massimo", f"{float(v2_general.get('max_probability_shift_pp', 0.0) or 0.0):.2f} pp")
+        if float(v2_general.get("v2_changed_pick_pct", 0.0) or 0.0) < 5.0:
+            st.info("Il v2 e molto prudente / quasi neutro nel campione selezionato: cambia meno del 5% delle pick.")
 
         with st.expander("Bucket Predictor contestuale v2", expanded=False):
             bucket_labels_v2 = {
