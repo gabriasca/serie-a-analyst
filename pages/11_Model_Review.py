@@ -40,10 +40,10 @@ def _load_schedule_dataframe(season: str, fallback_df: pd.DataFrame | None = Non
 
 
 @st.cache_data(show_spinner=False)
-def _build_review_for_season(season: str) -> dict[str, object]:
+def _build_review_for_season(season: str, max_matches: int | None) -> dict[str, object]:
     season_df = _load_season_dataframe(season)
     schedule_df = _load_schedule_dataframe(season, fallback_df=season_df)
-    return build_model_review(season_df, minimum_team_history=1, schedule_df=schedule_df)
+    return build_model_review(season_df, minimum_team_history=1, schedule_df=schedule_df, max_matches=max_matches)
 
 
 def _safe_dataframe(df: pd.DataFrame) -> None:
@@ -73,6 +73,12 @@ def _render_metric_block(label: str, hits: int, total: int) -> None:
     st.caption(count_text)
 
 
+def _format_optional_float(value: object, digits: int = 4) -> str:
+    if value is None or pd.isna(value):
+        return "n/d"
+    return f"{float(value):.{digits}f}"
+
+
 st.set_page_config(page_title=f"{APP_TITLE} | Model Review", layout="wide")
 
 bootstrap_database()
@@ -98,12 +104,21 @@ if not seasons:
     st.stop()
 
 selected_season = st.selectbox("Seleziona stagione", seasons)
+max_match_options = {
+    "30 partite": 30,
+    "60 partite": 60,
+    "100 partite": 100,
+    "Tutta la stagione": None,
+}
+selected_max_label = st.selectbox("Numero massimo partite nel backtest", list(max_match_options.keys()), index=1)
+selected_max_matches = max_match_options[selected_max_label]
 
 if st.button("Esegui model review"):
     with st.spinner("Sto costruendo il backtest storico partita per partita..."):
         st.session_state["model_review_result"] = {
             "season": selected_season,
-            "review": _build_review_for_season(selected_season),
+            "max_matches": selected_max_matches,
+            "review": _build_review_for_season(selected_season, selected_max_matches),
         }
 
 review: dict[str, object] | None = None
@@ -113,6 +128,8 @@ if not stored_result:
 else:
     if stored_result.get("season") != selected_season:
         st.info("Premi di nuovo 'Esegui model review' per aggiornare il backtest con la stagione corrente.")
+    elif stored_result.get("max_matches") != selected_max_matches:
+        st.info("Premi di nuovo 'Esegui model review' per aggiornare il backtest con il limite partite corrente.")
     else:
         candidate_review = stored_result.get("review") or {}
         if not candidate_review.get("ok"):
@@ -127,6 +144,7 @@ if review:
     general_review = review["general_review"]
     diagnostic_tables = review["diagnostic_tables"]
     bucket_review = review["bucket_review"]
+    predictor_v2_review = review.get("predictor_v2_review", {})
     factor_review = review["factor_review"]
     calibration_guidance = review.get("calibration_guidance", {})
     conclusions = review["conclusions"]
@@ -253,6 +271,67 @@ if review:
 
     st.subheader("Conclusioni automatiche")
     _render_bullets(conclusions)
+
+    st.subheader("Review Predictor contestuale v2")
+    st.warning(
+        "Il Predictor contestuale v2 e sperimentale. Questa review serve a capire se migliora il modello base."
+    )
+    if not predictor_v2_review.get("ok"):
+        st.caption(predictor_v2_review.get("message", "Review Predictor contestuale v2 non disponibile."))
+    else:
+        v2_general = predictor_v2_review.get("general_review", {})
+        v2_bucket_review = predictor_v2_review.get("bucket_review", {})
+        v2_diagnostics = predictor_v2_review.get("diagnostic_tables", {})
+
+        v2_col1, v2_col2, v2_col3, v2_col4 = st.columns(4)
+        v2_col1.metric("Partite analizzate", int(v2_general.get("matches_analyzed", 0) or 0))
+        v2_col2.metric("Accuracy base", f"{float(v2_general.get('base_accuracy_pct', 0.0) or 0.0):.1f}%")
+        v2_col3.metric("Accuracy v2", f"{float(v2_general.get('v2_accuracy_pct', 0.0) or 0.0):.1f}%")
+        v2_col4.metric("Delta Brier", _format_optional_float(v2_general.get("brier_delta")))
+
+        brier_col1, brier_col2, fav_col1, fav_col2 = st.columns(4)
+        brier_col1.metric("Brier base", _format_optional_float(v2_general.get("base_brier")))
+        brier_col2.metric("Brier v2", _format_optional_float(v2_general.get("v2_brier")))
+        fav_col1.metric("Favorito base non perde", f"{float(v2_general.get('base_favorite_non_loss_pct', 0.0) or 0.0):.1f}%")
+        fav_col2.metric("Favorito v2 non perde", f"{float(v2_general.get('v2_favorite_non_loss_pct', 0.0) or 0.0):.1f}%")
+
+        change_col1, change_col2, change_col3, change_col4 = st.columns(4)
+        change_col1.metric("Cambi pick v2", int(v2_general.get("v2_changed_pick_total", 0) or 0))
+        change_col2.metric("Cambi corretti", int(v2_general.get("v2_changed_pick_correct", 0) or 0))
+        change_col3.metric("X aumentata e pari", int(v2_general.get("v2_increased_draw_correct", 0) or 0))
+        change_col4.metric("X aumentata e sbagliata", int(v2_general.get("v2_increased_draw_wrong", 0) or 0))
+
+        with st.expander("Bucket Predictor contestuale v2", expanded=False):
+            bucket_labels_v2 = {
+                "confidence": "Confidence bassa / media / alta",
+                "draw_risk": "Draw risk basso / medio / alto",
+                "upset_risk": "Upset risk basso / medio / alto",
+            }
+            for key, label in bucket_labels_v2.items():
+                st.markdown(f"### {label}")
+                bucket_df = v2_bucket_review.get(key, pd.DataFrame())
+                if isinstance(bucket_df, pd.DataFrame) and not bucket_df.empty:
+                    _safe_dataframe(bucket_df)
+                else:
+                    st.caption("Bucket non disponibile.")
+
+        with st.expander("Tabelle diagnostiche Predictor contestuale v2", expanded=False):
+            diagnostic_labels_v2 = {
+                "improved": "Partite dove il v2 ha migliorato",
+                "worsened": "Partite dove il v2 ha peggiorato",
+                "draw_improved": "Partite dove il v2 ha aumentato correttamente il pareggio",
+                "overcorrected": "Partite dove il v2 ha corretto troppo",
+            }
+            for key, label in diagnostic_labels_v2.items():
+                st.markdown(f"### {label}")
+                table = v2_diagnostics.get(key, pd.DataFrame())
+                if isinstance(table, pd.DataFrame) and not table.empty:
+                    _safe_dataframe(table)
+                else:
+                    st.caption("Nessun caso rilevante disponibile per questo blocco.")
+
+        st.markdown("### Sintesi Predictor contestuale v2")
+        _render_bullets(predictor_v2_review.get("conclusions", []))
 
     with st.expander("Dettaglio partite backtestate"):
         raw_columns = [

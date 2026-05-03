@@ -9,6 +9,7 @@ from src.advanced_metrics import build_advanced_team_metrics
 from src.analytics import prepare_matches_dataframe
 from src.context_engine import build_context_adjusted_edge
 from src.db import get_connection, init_db
+from src.forecast_context import build_contextual_forecast
 from src.matchup_analysis import build_predictor_context, build_style_advantage, identify_key_mismatches
 from src.predictor import predict_match
 from src.schedule_context import build_match_schedule_context, build_schedule_data_audit
@@ -205,6 +206,46 @@ def _actual_outcome(row: pd.Series) -> tuple[str, int]:
     return "X", 0
 
 
+def _one_hot_outcome(actual_outcome: str) -> dict[str, float]:
+    return {"1": 1.0 if actual_outcome == "1" else 0.0, "X": 1.0 if actual_outcome == "X" else 0.0, "2": 1.0 if actual_outcome == "2" else 0.0}
+
+
+def _extract_probabilities(probabilities: dict[str, Any] | None) -> dict[str, float] | None:
+    if not probabilities:
+        return None
+    try:
+        extracted = {
+            "1": max(float(probabilities.get("1", 0.0) or 0.0), 0.0),
+            "X": max(float(probabilities.get("X", 0.0) or 0.0), 0.0),
+            "2": max(float(probabilities.get("2", 0.0) or 0.0), 0.0),
+        }
+    except (TypeError, ValueError):
+        return None
+    total = sum(extracted.values())
+    if total <= 0:
+        return None
+    return {key: value / total for key, value in extracted.items()}
+
+
+def _predicted_outcome(probabilities: dict[str, float] | None) -> str | None:
+    if not probabilities:
+        return None
+    return max(["1", "X", "2"], key=lambda key: probabilities.get(key, 0.0))
+
+
+def _probability_favorite(probabilities: dict[str, float] | None) -> str:
+    if not probabilities:
+        return "none"
+    return "home" if probabilities.get("1", 0.0) >= probabilities.get("2", 0.0) else "away"
+
+
+def _brier_score(probabilities: dict[str, float] | None, actual_outcome: str) -> float | None:
+    if not probabilities:
+        return None
+    target = _one_hot_outcome(actual_outcome)
+    return round(sum((probabilities[key] - target[key]) ** 2 for key in ["1", "X", "2"]) / 3.0, 6)
+
+
 def _favorite_from_edge(edge: float | None, threshold: float = EDGE_THRESHOLD) -> str:
     if edge is None:
         return "none"
@@ -287,10 +328,12 @@ def build_backtest_rows(
     season_df: pd.DataFrame,
     minimum_team_history: int = 1,
     schedule_df: pd.DataFrame | None = None,
+    max_matches: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     prepared_df = prepare_matches_dataframe(season_df)
     if prepared_df.empty:
         return pd.DataFrame(), pd.DataFrame()
+    target_max_matches = int(max_matches) if max_matches is not None and max_matches > 0 else None
 
     schedule_prepared_df = _prepare_optional_schedule_df(schedule_df, prepared_df)
     ratings_history_df = _load_ratings_history()
@@ -370,6 +413,40 @@ def build_backtest_rows(
             schedule_context=schedule_context,
         )
         actual_outcome, actual_sign = _actual_outcome(row)
+        base_probabilities = _extract_probabilities(predictor.get("probabilities")) if predictor.get("ok") else None
+        matchup_stub = {
+            "ok": True,
+            "context_engine": context_engine,
+            "warnings": schedule_context.get("warnings", []),
+            "schedule_context": schedule_context,
+        }
+        contextual_forecast = build_contextual_forecast(predictor, matchup_analysis=matchup_stub) if predictor.get("ok") else {}
+        v2_probabilities = _extract_probabilities(contextual_forecast.get("contextual_probabilities")) if contextual_forecast else None
+        base_pick = _predicted_outcome(base_probabilities)
+        v2_pick = _predicted_outcome(v2_probabilities)
+        base_probability_favorite = _probability_favorite(base_probabilities)
+        v2_probability_favorite = _probability_favorite(v2_probabilities)
+        base_brier = _brier_score(base_probabilities, actual_outcome)
+        v2_brier = _brier_score(v2_probabilities, actual_outcome)
+        draw_delta = (
+            round(v2_probabilities.get("X", 0.0) - base_probabilities.get("X", 0.0), 6)
+            if base_probabilities and v2_probabilities
+            else None
+        )
+        probability_shift = (
+            round(sum(abs(v2_probabilities[key] - base_probabilities[key]) for key in ["1", "X", "2"]), 6)
+            if base_probabilities and v2_probabilities
+            else None
+        )
+        brier_delta = round(v2_brier - base_brier, 6) if base_brier is not None and v2_brier is not None else None
+        v2_changed_pick = bool(base_pick and v2_pick and base_pick != v2_pick)
+        v2_increased_draw = bool(draw_delta is not None and draw_delta > 0.01)
+        v2_overcorrected = bool(
+            probability_shift is not None
+            and brier_delta is not None
+            and probability_shift >= 0.06
+            and brier_delta >= 0.02
+        )
         base_edge = _safe_float(context_engine.get("base_edge")) or 0.0
         adjusted_edge = _safe_float(context_engine.get("adjusted_edge")) or 0.0
         draw_risk = _safe_float(context_engine.get("draw_risk")) or 0.0
@@ -407,6 +484,32 @@ def build_backtest_rows(
                 "base_favorite_not_lose": base_not_lose,
                 "adjusted_favorite_not_lose": adjusted_not_lose,
                 "adjusted_favorite_win": adjusted_win,
+                "base_probability_1": round(base_probabilities["1"], 4) if base_probabilities else None,
+                "base_probability_x": round(base_probabilities["X"], 4) if base_probabilities else None,
+                "base_probability_2": round(base_probabilities["2"], 4) if base_probabilities else None,
+                "v2_probability_1": round(v2_probabilities["1"], 4) if v2_probabilities else None,
+                "v2_probability_x": round(v2_probabilities["X"], 4) if v2_probabilities else None,
+                "v2_probability_2": round(v2_probabilities["2"], 4) if v2_probabilities else None,
+                "base_pick": base_pick,
+                "v2_pick": v2_pick,
+                "base_pick_correct": bool(base_pick == actual_outcome) if base_pick else None,
+                "v2_pick_correct": bool(v2_pick == actual_outcome) if v2_pick else None,
+                "base_probability_favorite": base_probability_favorite,
+                "v2_probability_favorite": v2_probability_favorite,
+                "base_probability_favorite_not_lose": _favorite_not_lose(base_probability_favorite, actual_outcome),
+                "v2_probability_favorite_not_lose": _favorite_not_lose(v2_probability_favorite, actual_outcome),
+                "v2_probability_favorite_win": _favorite_win(v2_probability_favorite, actual_outcome),
+                "base_brier": base_brier,
+                "v2_brier": v2_brier,
+                "brier_delta": brier_delta,
+                "v2_changed_pick": v2_changed_pick,
+                "v2_change_correct": bool(v2_changed_pick and v2_pick == actual_outcome and base_pick != actual_outcome),
+                "draw_probability_delta": draw_delta,
+                "v2_increased_draw": v2_increased_draw,
+                "v2_draw_increase_correct": bool(v2_increased_draw and actual_outcome == "X"),
+                "v2_draw_increase_wrong": bool(v2_increased_draw and actual_outcome != "X"),
+                "probability_shift": probability_shift,
+                "v2_overcorrected": v2_overcorrected,
                 "base_score": base_score,
                 "adjusted_score": adjusted_score,
                 "context_delta": context_delta,
@@ -458,6 +561,9 @@ def build_backtest_rows(
                     "used_actively": abs(weighted_impact) >= 1.0,
                 }
             )
+
+        if target_max_matches is not None and len(rows) >= target_max_matches:
+            break
 
     backtest_df = pd.DataFrame(rows)
     factors_df = pd.DataFrame(factor_rows)
@@ -590,6 +696,242 @@ def build_bucket_review(backtest_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         "draw_risk": _aggregate_by_bucket("draw_risk_bucket"),
         "upset_risk": _aggregate_by_bucket("upset_risk_bucket"),
         "adjusted_edge": _aggregate_by_bucket("adjusted_edge_bucket"),
+    }
+
+
+def _predictor_v2_available_df(backtest_df: pd.DataFrame) -> pd.DataFrame:
+    if backtest_df.empty:
+        return pd.DataFrame()
+    required_columns = ["base_pick", "v2_pick", "base_brier", "v2_brier"]
+    missing_columns = [column for column in required_columns if column not in backtest_df.columns]
+    if missing_columns:
+        return pd.DataFrame()
+    return backtest_df.dropna(subset=required_columns).copy()
+
+
+def build_predictor_v2_general_review(backtest_df: pd.DataFrame) -> dict[str, Any]:
+    review_df = _predictor_v2_available_df(backtest_df)
+    if review_df.empty:
+        return {
+            "matches_analyzed": 0,
+            "base_accuracy_pct": 0.0,
+            "v2_accuracy_pct": 0.0,
+            "base_favorite_non_loss_pct": 0.0,
+            "v2_favorite_non_loss_pct": 0.0,
+            "base_brier": None,
+            "v2_brier": None,
+            "brier_delta": None,
+            "v2_changed_pick_total": 0,
+            "v2_changed_pick_correct": 0,
+            "v2_increased_draw_total": 0,
+            "v2_increased_draw_correct": 0,
+            "v2_increased_draw_wrong": 0,
+            "v2_overcorrected_total": 0,
+        }
+
+    base_favorite_mask = review_df["base_probability_favorite"] != "none"
+    v2_favorite_mask = review_df["v2_probability_favorite"] != "none"
+    changed_mask = review_df["v2_changed_pick"].fillna(False)
+    draw_increase_mask = review_df["v2_increased_draw"].fillna(False)
+    base_brier = float(review_df["base_brier"].mean())
+    v2_brier = float(review_df["v2_brier"].mean())
+
+    return {
+        "matches_analyzed": int(len(review_df)),
+        "base_accuracy_pct": round(float(review_df["base_pick_correct"].fillna(False).mean() * 100.0), 1),
+        "v2_accuracy_pct": round(float(review_df["v2_pick_correct"].fillna(False).mean() * 100.0), 1),
+        "base_favorite_non_loss_pct": round(
+            float(review_df.loc[base_favorite_mask, "base_probability_favorite_not_lose"].fillna(False).mean() * 100.0)
+            if base_favorite_mask.any()
+            else 0.0,
+            1,
+        ),
+        "v2_favorite_non_loss_pct": round(
+            float(review_df.loc[v2_favorite_mask, "v2_probability_favorite_not_lose"].fillna(False).mean() * 100.0)
+            if v2_favorite_mask.any()
+            else 0.0,
+            1,
+        ),
+        "base_brier": round(base_brier, 4),
+        "v2_brier": round(v2_brier, 4),
+        "brier_delta": round(v2_brier - base_brier, 4),
+        "v2_changed_pick_total": int(changed_mask.sum()),
+        "v2_changed_pick_correct": int(review_df.loc[changed_mask, "v2_change_correct"].fillna(False).sum()),
+        "v2_increased_draw_total": int(draw_increase_mask.sum()),
+        "v2_increased_draw_correct": int(review_df.loc[draw_increase_mask, "v2_draw_increase_correct"].fillna(False).sum()),
+        "v2_increased_draw_wrong": int(review_df.loc[draw_increase_mask, "v2_draw_increase_wrong"].fillna(False).sum()),
+        "v2_overcorrected_total": int(review_df["v2_overcorrected"].fillna(False).sum()),
+    }
+
+
+def build_predictor_v2_bucket_review(backtest_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    review_df = _predictor_v2_available_df(backtest_df)
+    if review_df.empty:
+        empty = pd.DataFrame()
+        return {"confidence": empty, "draw_risk": empty, "upset_risk": empty}
+
+    def _aggregate(column: str, include_draw_rate: bool = False, include_upset_rate: bool = False) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        for bucket, bucket_df in review_df.groupby(column):
+            row = {
+                "Bucket": bucket,
+                "Partite": int(len(bucket_df)),
+                "Accuracy base %": round(float(bucket_df["base_pick_correct"].fillna(False).mean() * 100.0), 1),
+                "Accuracy v2 %": round(float(bucket_df["v2_pick_correct"].fillna(False).mean() * 100.0), 1),
+                "Brier base": round(float(bucket_df["base_brier"].mean()), 4),
+                "Brier v2": round(float(bucket_df["v2_brier"].mean()), 4),
+            }
+            if include_draw_rate:
+                row["Pareggi reali %"] = round(float((bucket_df["actual_outcome"] == "X").mean() * 100.0), 1)
+            if include_upset_rate:
+                favorite_mask = bucket_df["v2_probability_favorite"] != "none"
+                row["Upset reali %"] = round(
+                    float(bucket_df.loc[favorite_mask, "v2_probability_favorite_win"].fillna(False).eq(False).mean() * 100.0)
+                    if favorite_mask.any()
+                    else 0.0,
+                    1,
+                )
+            rows.append(row)
+        return pd.DataFrame(rows)
+
+    return {
+        "confidence": _aggregate("confidence_bucket"),
+        "draw_risk": _aggregate("draw_risk_bucket", include_draw_rate=True),
+        "upset_risk": _aggregate("upset_risk_bucket", include_upset_rate=True),
+    }
+
+
+def build_predictor_v2_diagnostic_tables(backtest_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    review_df = _predictor_v2_available_df(backtest_df)
+    if review_df.empty:
+        empty = pd.DataFrame()
+        return {"improved": empty, "worsened": empty, "draw_improved": empty, "overcorrected": empty}
+
+    display_columns = [
+        "match_date",
+        "home_team",
+        "away_team",
+        "score",
+        "actual_outcome",
+        "base_pick",
+        "v2_pick",
+        "base_brier",
+        "v2_brier",
+        "brier_delta",
+        "draw_probability_delta",
+        "confidence",
+        "draw_risk",
+        "upset_risk",
+    ]
+    improved_mask = (
+        (review_df["base_pick_correct"].fillna(False).eq(False) & review_df["v2_pick_correct"].fillna(False))
+        | (review_df["brier_delta"] <= -0.03)
+    )
+    worsened_mask = (
+        (review_df["base_pick_correct"].fillna(False) & review_df["v2_pick_correct"].fillna(False).eq(False))
+        | (review_df["brier_delta"] >= 0.03)
+    )
+    diagnostics = {
+        "improved": review_df.loc[improved_mask].sort_values(["brier_delta", "confidence"], ascending=[True, False])[display_columns].head(20),
+        "worsened": review_df.loc[worsened_mask].sort_values(["brier_delta", "confidence"], ascending=[False, True])[display_columns].head(20),
+        "draw_improved": review_df.loc[review_df["v2_draw_increase_correct"].fillna(False)].sort_values(
+            ["draw_probability_delta", "confidence"], ascending=[False, False]
+        )[display_columns].head(20),
+        "overcorrected": review_df.loc[review_df["v2_overcorrected"].fillna(False)].sort_values(
+            ["probability_shift", "brier_delta"], ascending=[False, False]
+        )[display_columns].head(20),
+    }
+    for key, table in diagnostics.items():
+        if not table.empty:
+            diagnostics[key] = table.assign(match_date=table["match_date"].dt.strftime("%Y-%m-%d"))
+    return diagnostics
+
+
+def build_predictor_v2_conclusions(
+    backtest_df: pd.DataFrame,
+    general_review: dict[str, Any],
+    bucket_review: dict[str, pd.DataFrame],
+) -> list[str]:
+    review_df = _predictor_v2_available_df(backtest_df)
+    if review_df.empty:
+        return ["Dati insufficienti per confrontare Predictor base e Predictor contestuale v2."]
+
+    conclusions: list[str] = []
+    base_accuracy = float(general_review.get("base_accuracy_pct", 0.0) or 0.0)
+    v2_accuracy = float(general_review.get("v2_accuracy_pct", 0.0) or 0.0)
+    brier_delta = general_review.get("brier_delta")
+    if v2_accuracy >= base_accuracy + 3.0:
+        conclusions.append(f"Il v2 migliora l'accuracy 1/X/2 rispetto al base ({v2_accuracy:.1f}% vs {base_accuracy:.1f}%).")
+    elif v2_accuracy <= base_accuracy - 3.0:
+        conclusions.append(f"Il v2 peggiora l'accuracy 1/X/2 rispetto al base ({v2_accuracy:.1f}% vs {base_accuracy:.1f}%).")
+    else:
+        conclusions.append(f"Il v2 e per ora quasi neutro sull'accuracy 1/X/2 ({v2_accuracy:.1f}% vs {base_accuracy:.1f}%).")
+
+    if brier_delta is not None and brier_delta <= -0.005:
+        conclusions.append(f"Brier score migliore per il v2: delta {brier_delta:.4f} (piu basso e meglio).")
+    elif brier_delta is not None and brier_delta >= 0.005:
+        conclusions.append(f"Brier score peggiore per il v2: delta {brier_delta:.4f}; serve ulteriore calibrazione.")
+    else:
+        conclusions.append("Brier score sostanzialmente stabile: il v2 non altera molto la qualita probabilistica media.")
+
+    equilibrate_df = review_df.loc[(review_df["base_probability_1"] - review_df["base_probability_2"]).abs() < 0.08]
+    if not equilibrate_df.empty:
+        eq_base_brier = float(equilibrate_df["base_brier"].mean())
+        eq_v2_brier = float(equilibrate_df["v2_brier"].mean())
+        if eq_v2_brier < eq_base_brier:
+            conclusions.append("Nelle partite equilibrate il v2 mostra un segnale utile sul Brier score.")
+        else:
+            conclusions.append("Nelle partite equilibrate il v2 non mostra ancora un vantaggio chiaro.")
+
+    draw_df = bucket_review.get("draw_risk", pd.DataFrame())
+    if isinstance(draw_df, pd.DataFrame) and not draw_df.empty and "Pareggi reali %" in draw_df.columns:
+        high_draw_df = draw_df.loc[draw_df["Bucket"] == "alto"]
+        overall_draw_rate = float((review_df["actual_outcome"] == "X").mean() * 100.0)
+        if not high_draw_df.empty and float(high_draw_df.iloc[0]["Pareggi reali %"]) > overall_draw_rate:
+            conclusions.append("Draw risk promettente: il bucket alto contiene piu pareggi della media.")
+        else:
+            conclusions.append("Draw risk da rivedere: il bucket alto non separa ancora bene i pareggi.")
+
+    upset_df = bucket_review.get("upset_risk", pd.DataFrame())
+    if isinstance(upset_df, pd.DataFrame) and not upset_df.empty and "Upset reali %" in upset_df.columns:
+        high_upset_df = upset_df.loc[upset_df["Bucket"] == "alto"]
+        overall_upset_rate = float(review_df["v2_probability_favorite_win"].fillna(False).eq(False).mean() * 100.0)
+        if not high_upset_df.empty and float(high_upset_df.iloc[0]["Upset reali %"]) > overall_upset_rate:
+            conclusions.append("Upset risk mostra separazione utile: il bucket alto ha piu favoriti che non vincono.")
+        else:
+            conclusions.append("Upset risk ancora poco separante rispetto alla media dei favoriti che non vincono.")
+
+    confidence_df = bucket_review.get("confidence", pd.DataFrame())
+    if isinstance(confidence_df, pd.DataFrame) and not confidence_df.empty:
+        high_conf = confidence_df.loc[confidence_df["Bucket"] == "alto"]
+        low_conf = confidence_df.loc[confidence_df["Bucket"] == "basso"]
+        if not high_conf.empty and not low_conf.empty and float(high_conf.iloc[0]["Brier v2"]) < float(low_conf.iloc[0]["Brier v2"]):
+            conclusions.append("Confidence alta sembra piu affidabile: Brier v2 migliore rispetto alla confidence bassa.")
+        elif not high_conf.empty and not low_conf.empty:
+            conclusions.append("Confidence ancora da monitorare: non separa sempre i match probabilisticamente migliori.")
+
+    if brier_delta is not None and brier_delta < -0.005 and v2_accuracy >= base_accuracy:
+        conclusions.append("Raccomandazione: considerare il v2 in modo selettivo, ma non usarlo ancora per Proiezione Classifica.")
+    else:
+        conclusions.append("Raccomandazione: mantenere il v2 come lettura interpretativa finche il vantaggio sul base non e stabile.")
+
+    return conclusions[:7]
+
+
+def build_predictor_v2_review(backtest_df: pd.DataFrame) -> dict[str, Any]:
+    general_review = build_predictor_v2_general_review(backtest_df)
+    bucket_review = build_predictor_v2_bucket_review(backtest_df)
+    diagnostic_tables = build_predictor_v2_diagnostic_tables(backtest_df)
+    conclusions = build_predictor_v2_conclusions(backtest_df, general_review, bucket_review)
+    return {
+        "ok": int(general_review.get("matches_analyzed", 0) or 0) > 0,
+        "message": None
+        if int(general_review.get("matches_analyzed", 0) or 0) > 0
+        else "Predictor base/v2 non disponibile nel campione selezionato.",
+        "general_review": general_review,
+        "bucket_review": bucket_review,
+        "diagnostic_tables": diagnostic_tables,
+        "conclusions": conclusions,
     }
 
 
@@ -859,6 +1201,7 @@ def build_model_review(
     season_df: pd.DataFrame,
     minimum_team_history: int = 1,
     schedule_df: pd.DataFrame | None = None,
+    max_matches: int | None = None,
 ) -> dict[str, Any]:
     schedule_source_df = schedule_df if isinstance(schedule_df, pd.DataFrame) and not schedule_df.empty else season_df
     ratings_audit = build_ratings_audit(season_df)
@@ -867,10 +1210,12 @@ def build_model_review(
         season_df,
         minimum_team_history=minimum_team_history,
         schedule_df=schedule_source_df,
+        max_matches=max_matches,
     )
     general_review = build_general_review(backtest_df)
     diagnostic_tables = build_diagnostic_tables(backtest_df)
     bucket_review = build_bucket_review(backtest_df)
+    predictor_v2_review = build_predictor_v2_review(backtest_df)
     factor_review_df = build_factor_review(factors_df, ratings_audit=ratings_audit, schedule_audit=schedule_audit)
     conclusions = build_review_conclusions(backtest_df, factor_review_df, general_review)
     calibration_guidance = build_calibration_guidance(
@@ -892,6 +1237,7 @@ def build_model_review(
         "general_review": general_review,
         "diagnostic_tables": diagnostic_tables,
         "bucket_review": bucket_review,
+        "predictor_v2_review": predictor_v2_review,
         "factor_review": factor_review_df,
         "calibration_guidance": calibration_guidance,
         "conclusions": conclusions,

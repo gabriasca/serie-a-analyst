@@ -251,6 +251,15 @@ Nota importante sul rating Elo:
 - in quel caso il factor review lo segnala come `informativo / non usato per calibrazione storica`
 - questo evita di scambiare per "fattore neutro" un dato che in realta non era disponibile storicamente nel backtest
 
+## Review Predictor contestuale v2
+
+La `Model Review` include anche un confronto tra predictor base Poisson e Predictor contestuale v2.
+
+- confronta accuracy 1/X/2, favorito che non perde e Brier score
+- mostra quando il v2 cambia pick, migliora o peggiora rispetto alla baseline
+- analizza bucket di `confidence`, `draw_risk` e `upset_risk`
+- non modifica `src/predictor.py` e non modifica la `Proiezione Classifica`
+
 ## Limiti dell'MVP
 
 - non usa API esterne
