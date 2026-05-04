@@ -205,6 +205,48 @@ Limiti:
 - il rating Elo e solo informativo
 - non trasforma mai il dato statistico in una certezza
 
+## Analisi Giornata
+
+La pagina `Analisi Giornata` genera una lettura partita per partita della prossima giornata o delle prossime partite disponibili.
+
+Usa:
+
+- predictor base Poisson come baseline numerica
+- Predictor contestuale v2 come correzione prudente e spiegabile
+- Matchup Analysis, context_engine, metriche avanzate, Elo e calendario/riposo
+- classifica corrente, rendimento casa/fuori e forma recente
+
+Fonte partite:
+
+- se esiste `data/raw/serie_a_fixtures_seed.csv`, la pagina usa le partite future non ancora giocate presenti nel seed
+- se il fixture seed non esiste, usa le partite mancanti inferite dal calendario home/away, con warning esplicito
+- la UI non scarica internet, non chiama API e non usa calendario ufficiale se non e stato seedato
+
+Aggiornamento fixture seed:
+
+- lo script `scripts/update_serie_a_fixtures_seed.py` aggiorna `data/raw/serie_a_fixtures_seed.csv`
+- la URL si configura con `FOOTBALL_DATA_SERIE_A_FIXTURES_URL`
+- se la variabile non e impostata, usa la stessa URL football-data gia configurata per il seed Serie A
+- il workflow `.github/workflows/update-fixtures.yml` puo girare manualmente o ogni giorno
+- l'aggiornamento e best-effort: se la fonte non e raggiungibile e il fixture seed esiste gia, il file esistente viene mantenuto
+- lo script non modifica `data/raw/serie_a_seed.csv` e non scrive nel database
+
+Cosa produce:
+
+- tabella riepilogo con probabilita base e contestuali `1 / X / 2`
+- risultato piu probabile del modello base
+- confidence, draw risk, upset risk, volatilita e interesse del match
+- dettaglio con narrativa prudente, fattori chiave, possibili imprevisti e dati mancanti
+- sintesi della giornata con partita piu equilibrata, maggiore rischio pareggio, maggiore rischio upset e maggiore volatilita
+
+Limiti:
+
+- non usa quote o scommesse
+- non inventa lineup, assenze, infortuni o squalifiche
+- non usa xG reali shot-by-shot
+- se mancano fixture seed o competizioni extra, la lettura del calendario e parziale
+- non modifica predictor base e non modifica la `Proiezione Classifica`
+
 ## Schedule & Competition Context
 
 Il layer `Schedule & Competition Context v1` misura riposo, carico partite e differenza tra forma campionato e forma su tutte le competizioni disponibili.

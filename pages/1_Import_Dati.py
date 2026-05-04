@@ -17,6 +17,7 @@ from src.data_import import (
 from src.data_freshness import build_data_freshness_report
 from src.db import delete_all_matches, delete_matches_by_season, fetch_matches, get_database_status
 from src.demo_data import load_demo_data
+from src.round_analysis import build_fixture_seed_report
 from src.seed_data import bootstrap_database
 
 
@@ -101,9 +102,18 @@ try:
     bootstrap_database()
     db_status = safe_status(get_database_status())
     freshness_report = build_data_freshness_report(fetch_matches())
+    fixture_seed_report = build_fixture_seed_report()
 except Exception as exc:  # pragma: no cover - defensive fallback for cloud/runtime issues
     db_status = safe_status({})
     freshness_report = build_data_freshness_report(pd.DataFrame())
+    fixture_seed_report = {
+        "available": False,
+        "path_exists": False,
+        "fixture_count": 0,
+        "next_fixture_date": None,
+        "next_matchday": None,
+        "source_names": [],
+    }
     status_error = str(exc)
 
 seasons = safe_list(db_status.get("seasons", []))
@@ -137,6 +147,19 @@ if PUBLIC_DEMO_MODE:
         freshness_report.get("freshness_status"),
         freshness_report.get("freshness_message") or freshness_report.get("freshness_summary"),
     )
+
+    st.subheader("Fixture prossima giornata")
+    fixture_col1, fixture_col2, fixture_col3 = st.columns(3)
+    fixture_col1.metric("Fixture seed", "Presente" if fixture_seed_report.get("available") else "Assente")
+    fixture_col2.metric("Prossima data fixture", fixture_seed_report.get("next_fixture_date") or "n/d")
+    fixture_col3.metric("Fixture nel seed", fixture_seed_report.get("fixture_count", 0))
+    if fixture_seed_report.get("next_matchday"):
+        st.write(f"Prossima giornata fixture: {fixture_seed_report.get('next_matchday')}")
+    fixture_sources = fixture_seed_report.get("source_names") or []
+    if fixture_sources:
+        st.write("Fonte fixture: " + ", ".join(str(source) for source in fixture_sources))
+    else:
+        st.caption("Fixture seed non presente: Analisi Giornata usera il fallback inferito.")
 
     st.subheader("Ultimi match caricati")
     latest_matches = freshness_report.get("latest_matches")
