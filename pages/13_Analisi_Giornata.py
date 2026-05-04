@@ -127,7 +127,92 @@ def _display_summary_table(summary_table: pd.DataFrame) -> pd.DataFrame:
     for column in ["Confidence", "Draw risk", "Upset risk"]:
         if column in display_df.columns:
             display_df[column] = display_df[column].map(lambda value: _format_score_value(value, digits=1, suffix="/100"))
-    return display_df
+    preferred_columns = [
+        "Partita",
+        "Giornata",
+        "livello_lettura",
+        "Prob base 1",
+        "Prob base X",
+        "Prob base 2",
+        "Prob cont 1",
+        "Prob cont X",
+        "Prob cont 2",
+        "Risultato piu probabile",
+        "Confidence",
+        "Draw risk",
+        "Upset risk",
+        "Volatilita",
+        "Scenario principale breve",
+        "Dato affidabile",
+        "Dato fragile",
+        "Interesse match",
+        "Tipo match",
+    ]
+    columns = [column for column in preferred_columns if column in display_df.columns]
+    return display_df[columns]
+
+
+def _display_rank_table(rows: list[dict[str, object]]) -> pd.DataFrame:
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    if "valore" in table.columns:
+        table["valore"] = table["valore"].map(lambda value: _format_score_value(value, digits=1))
+    return table.rename(
+        columns={
+            "partita": "Partita",
+            "metrica": "Metrica",
+            "valore": "Valore",
+            "livello_lettura": "Livello lettura",
+            "scenario": "Scenario",
+        }
+    )
+
+
+def _render_overview_card(label: str, value: object, help_text: str = "") -> None:
+    st.markdown(f"**{label}**")
+    st.write(value or "n/d")
+    if help_text:
+        st.caption(help_text)
+
+
+def _render_round_overview(analysis: dict[str, object]) -> None:
+    headline_summary = analysis.get("headline_summary", {}) or {}
+    cards = headline_summary.get("cards", {}) if isinstance(headline_summary, dict) else {}
+    tables = headline_summary.get("tables", {}) if isinstance(headline_summary, dict) else {}
+
+    st.subheader("Panoramica giornata")
+    st.write(headline_summary.get("headline", "Panoramica non disponibile."))
+
+    card1, card2, card3, card4 = st.columns(4)
+    with card1:
+        _render_overview_card("Piu equilibrata", cards.get("partita_piu_equilibrata"), "Probabilita piu vicine tra loro.")
+    with card2:
+        _render_overview_card("Draw risk", cards.get("piu_alto_draw_risk"), "Rischio pareggio piu alto.")
+    with card3:
+        _render_overview_card("Upset risk", cards.get("piu_alto_upset_risk"), "Favorito piu esposto al contesto.")
+    with card4:
+        _render_overview_card("Confidence alta", cards.get("confidence_piu_alta"), "Lettura piu coerente.")
+
+    card5, card6, card7 = st.columns(3)
+    with card5:
+        _render_overview_card("Confidence bassa", cards.get("confidence_piu_bassa"), "Match da leggere con piu prudenza.")
+    with card6:
+        _render_overview_card("Piu volatile", cards.get("partita_piu_volatile"), "Rischio di cambio lettura piu alto.")
+    with card7:
+        _render_overview_card("Piu stabile", cards.get("partita_piu_stabile"), "Segnali piu ordinati.")
+
+    table_col1, table_col2 = st.columns(2)
+    with table_col1:
+        st.markdown("#### Partite piu aperte")
+        st.dataframe(_display_rank_table(tables.get("partite_piu_aperte", [])), use_container_width=True)
+        st.markdown("#### Alto draw risk")
+        st.dataframe(_display_rank_table(tables.get("alto_draw_risk", [])), use_container_width=True)
+    with table_col2:
+        st.markdown("#### Alto upset risk")
+        st.dataframe(_display_rank_table(tables.get("alto_upset_risk", [])), use_container_width=True)
+        st.markdown("#### Bassa confidence")
+        st.dataframe(_display_rank_table(tables.get("bassa_confidence", [])), use_container_width=True)
 
 
 def _render_probability_metrics(title: str, probabilities: dict[str, object]) -> None:
@@ -181,14 +266,24 @@ def _render_match_detail(match: dict[str, object]) -> None:
     edge_col3.metric("Upset risk", _format_score_value(contextual.get("upset_risk"), digits=1, suffix="/100"))
     edge_col4.metric("Confidence", _format_score_value(contextual.get("confidence"), digits=1, suffix="/100"))
 
-    st.markdown("#### Trama probabile della partita")
-    st.write(match.get("narrative") or "Narrativa non disponibile con i dati correnti.")
+    st.markdown("#### Scenario principale")
+    st.write(match.get("scenario_principale") or "Scenario principale non disponibile.")
 
-    st.markdown("#### Fattori chiave")
-    _render_bullets(match.get("key_factors", []))
+    st.markdown("#### Scenario alternativo")
+    st.write(match.get("scenario_alternativo") or "Scenario alternativo non disponibile.")
 
-    st.markdown("#### Possibili imprevisti / fattori che possono cambiare la partita")
-    _render_bullets(match.get("turning_points", []))
+    st.markdown("#### Cosa puo cambiare la partita")
+    _render_bullets(match.get("cosa_puo_cambiare", []))
+
+    st.markdown("#### Dato piu affidabile")
+    st.info(match.get("dato_piu_affidabile") or "Dato affidabile non disponibile.")
+
+    st.markdown("#### Dato piu fragile")
+    st.warning(match.get("dato_piu_fragile") or "Dato fragile non disponibile.")
+
+    if match.get("key_factors"):
+        st.markdown("#### Fattori chiave di supporto")
+        _render_bullets(match.get("key_factors", []))
 
     st.markdown("#### Dati mancanti")
     _render_bullets(match.get("missing_data_notes", []))
@@ -291,6 +386,8 @@ if not analysis.get("ok"):
 for warning in analysis.get("warnings", []):
     st.info(warning)
 
+_render_round_overview(analysis)
+
 st.subheader("Tabella riepilogo giornata")
 summary_table = analysis.get("summary_table", pd.DataFrame())
 if isinstance(summary_table, pd.DataFrame) and not summary_table.empty:
@@ -312,7 +409,25 @@ summary_col3.metric("Rischio upset", round_summary.get("highest_upset_risk_match
 summary_col4, summary_col5 = st.columns(2)
 summary_col4.metric("Maggiore confidence", round_summary.get("highest_confidence_match") or "n/d")
 summary_col5.metric("Piu volatile", round_summary.get("most_volatile_match") or "n/d")
+summary_col6, summary_col7 = st.columns(2)
+summary_col6.metric("Confidence piu bassa", round_summary.get("lowest_confidence_match") or "n/d")
+summary_col7.metric("Piu stabile", round_summary.get("most_stable_match") or "n/d")
 st.write(round_summary.get("summary_text", "Sintesi non disponibile."))
+
+st.subheader("Conclusione giornata")
+analyst_notes = analysis.get("analyst_notes", {}) or {}
+counts = analyst_notes.get("counts", {})
+if isinstance(counts, dict) and counts:
+    count_col1, count_col2, count_col3, count_col4 = st.columns(4)
+    count_col1.metric("Partite equilibrate", counts.get("balanced_matches", 0))
+    count_col2.metric("Alto draw risk", counts.get("high_draw_risk_matches", 0))
+    count_col3.metric("Alto upset risk", counts.get("high_upset_risk_matches", 0))
+    count_col4.metric("Confidence media", _format_score_value(counts.get("average_confidence"), digits=1, suffix="/100"))
+st.write(analyst_notes.get("conclusion", "Conclusione giornata non disponibile."))
+limits = analyst_notes.get("limits", [])
+if limits:
+    st.markdown("#### Limiti principali della lettura")
+    _render_bullets(limits)
 st.caption(
     "Limiti: la pagina non usa quote, non inventa lineup o infortuni e non modifica Proiezione Classifica, che resta basata sul predictor base."
 )

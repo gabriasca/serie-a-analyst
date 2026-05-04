@@ -233,11 +233,13 @@ Aggiornamento fixture seed:
 
 Cosa produce:
 
+- panoramica giornata con partite piu aperte, piu stabili, piu volatili e a maggiore rischio
 - tabella riepilogo con probabilita base e contestuali `1 / X / 2`
 - risultato piu probabile del modello base
-- confidence, draw risk, upset risk, volatilita e interesse del match
-- dettaglio con narrativa prudente, fattori chiave, possibili imprevisti e dati mancanti
-- sintesi della giornata con partita piu equilibrata, maggiore rischio pareggio, maggiore rischio upset e maggiore volatilita
+- confidence, draw risk, upset risk, volatilita, livello lettura e interesse del match
+- scenario principale e scenario alternativo per ogni partita
+- dato piu affidabile, dato piu fragile e fattori che possono cambiare la lettura
+- conclusione giornata con conteggi su equilibrio, rischio pareggio, rischio upset e affidabilita complessiva
 
 Limiti:
 
