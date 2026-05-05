@@ -12,6 +12,7 @@ from src.db import fetch_matches, list_seasons
 from src.round_analysis import (
     available_fixture_matchdays,
     build_round_analysis,
+    infer_missing_fixtures_simulation,
     infer_next_round_fixtures,
     select_round_fixtures,
 )
@@ -316,23 +317,49 @@ if league_df.empty:
     st.warning("La stagione selezionata non contiene partite Serie A utilizzabili.")
     st.stop()
 
-candidate_fixtures = infer_next_round_fixtures(league_df, season=selected_season)
+analysis_mode = st.radio(
+    "Modalita analisi",
+    ["Prossima giornata da fixture seed", "Simulazione partite mancanti inferite"],
+    index=0,
+)
+
+if analysis_mode == "Prossima giornata da fixture seed":
+    candidate_fixtures = infer_next_round_fixtures(league_df, season=selected_season)
+else:
+    candidate_fixtures = infer_missing_fixtures_simulation(league_df, season=selected_season)
+
 source_label = candidate_fixtures.attrs.get("source_label", "Partite mancanti inferite")
 source_mode = candidate_fixtures.attrs.get("fixture_source", "inferred_missing")
+fixture_status = candidate_fixtures.attrs.get("fixture_status", source_mode)
+fixture_message = candidate_fixtures.attrs.get("message")
 warnings = candidate_fixtures.attrs.get("warnings", [])
 
 st.subheader("Fonte partite")
-if source_mode == "fixture_seed":
+if analysis_mode == "Prossima giornata da fixture seed" and source_mode == "fixture_seed":
     st.success("Fonte partite: fixture seed disponibile.")
+elif analysis_mode == "Prossima giornata da fixture seed":
+    st.error("Fixture seed non disponibile o senza fixture future valide.")
 else:
-    st.warning("Fonte partite: partite mancanti inferite, non confermate da calendario ufficiale.")
+    st.warning("Modalita simulazione: partite mancanti inferite, non calendario ufficiale.")
 st.write(f"Fonte usata: **{source_label}**")
+if fixture_message:
+    st.info(str(fixture_message))
 for warning in warnings:
     st.info(warning)
 
 if candidate_fixtures.empty:
-    st.warning("Nessuna partita futura o mancante disponibile per costruire la giornata.")
+    if analysis_mode == "Prossima giornata da fixture seed":
+        st.warning("Aggiorna fixture seed da GitHub Actions oppure controlla data/raw/serie_a_fixtures_seed.csv.")
+        if fixture_status == "no_valid_future_fixtures":
+            st.error("Fixture seed presente ma senza partite future utilizzabili. Non mostro partite inferite in modalita giornata reale.")
+        else:
+            st.error("Fixture seed assente o non valido. Non mostro partite inferite in modalita giornata reale.")
+    else:
+        st.warning("Nessuna partita mancante inferibile disponibile per costruire la simulazione.")
     st.stop()
+
+if analysis_mode == "Simulazione partite mancanti inferite":
+    st.error("Questa non e la prossima giornata ufficiale. Sono partite mancanti inferite.")
 
 matchdays = available_fixture_matchdays(candidate_fixtures)
 selected_matchday: int | None = None
@@ -340,7 +367,10 @@ if matchdays:
     selected_matchday = st.selectbox("Seleziona giornata", matchdays, format_func=lambda value: f"Giornata {value}")
     round_fixtures = select_round_fixtures(candidate_fixtures, matchday=selected_matchday)
 else:
-    st.info("Matchday non disponibile: mostro le prossime partite inferite.")
+    if source_mode == "fixture_seed":
+        st.info("Matchday non disponibile nel fixture seed: mostro il primo blocco di fixture ordinate per data.")
+    else:
+        st.warning("Matchday non disponibile: mostro partite mancanti inferite nella simulazione.")
     round_fixtures = select_round_fixtures(candidate_fixtures)
 
 if round_fixtures.empty:
@@ -362,6 +392,7 @@ if st.button("Genera analisi giornata"):
         )
     st.session_state["round_analysis_result"] = {
         "season": selected_season,
+        "mode": analysis_mode,
         "signature": fixture_signature,
         "analysis": analysis,
     }
@@ -372,7 +403,11 @@ if not stored_result:
     st.stop()
     analysis = {}
 else:
-    if stored_result.get("season") != selected_season or stored_result.get("signature") != fixture_signature:
+    if (
+        stored_result.get("season") != selected_season
+        or stored_result.get("mode") != analysis_mode
+        or stored_result.get("signature") != fixture_signature
+    ):
         st.info("Premi di nuovo 'Genera analisi giornata' per aggiornare il contenuto con la selezione corrente.")
         st.stop()
         analysis = {}

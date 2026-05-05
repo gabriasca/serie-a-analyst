@@ -133,35 +133,51 @@ def load_fixture_seed(path: str | Path | None = None) -> pd.DataFrame:
     return _ensure_fixture_columns(seed_df)
 
 
-def build_fixture_seed_report(season: str | None = None, path: str | Path | None = None) -> dict[str, Any]:
+def build_fixture_seed_report(
+    season: str | None = None,
+    path: str | Path | None = None,
+    results_df: pd.DataFrame | None = None,
+) -> dict[str, Any]:
     seed_path = Path(path) if path is not None else FIXTURE_SEED_PATH
     path_exists = seed_path.exists()
     fixtures_df = load_fixture_seed(seed_path)
-    if season and not fixtures_df.empty and "season" in fixtures_df.columns:
-        fixtures_df = fixtures_df[
-            fixtures_df["season"].isna()
-            | (fixtures_df["season"].astype(str).str.strip() == str(season).strip())
-        ].copy()
-    fixtures_df = _sort_fixtures(fixtures_df)
+    if path_exists and fixtures_df.empty:
+        future_df = pd.DataFrame(columns=FIXTURE_COLUMNS)
+        future_df.attrs.update(
+            _fixture_attrs(
+                "no_valid_future_fixtures",
+                "Fixture seed",
+                ["Fixture seed presente ma senza fixture future valide."],
+            )
+        )
+        future_df.attrs["message"] = "Fixture seed presente ma senza fixture future valide."
+    elif isinstance(results_df, pd.DataFrame):
+        future_df = filter_future_fixtures(fixtures_df, results_df, season=season)
+    else:
+        validation = validate_fixture_seed(fixtures_df, season=season)
+        future_df = validation["fixtures"].copy()
+        future_df.attrs.update(_fixture_attrs("fixture_seed", "Fixture seed", validation.get("warnings", [])))
+    future_df = _sort_fixtures(future_df)
 
     next_date = None
-    if not fixtures_df.empty and "match_date" in fixtures_df.columns:
-        dates = pd.to_datetime(fixtures_df["match_date"], errors="coerce").dropna()
+    if not future_df.empty and "match_date" in future_df.columns:
+        dates = pd.to_datetime(future_df["match_date"], errors="coerce").dropna()
         if not dates.empty:
             next_date = dates.min().strftime("%Y-%m-%d")
 
     next_matchday = None
-    if not fixtures_df.empty and "matchday" in fixtures_df.columns:
-        matchdays = pd.to_numeric(fixtures_df["matchday"], errors="coerce").dropna()
+    if not future_df.empty and "matchday" in future_df.columns:
+        matchdays = pd.to_numeric(future_df["matchday"], errors="coerce").dropna()
         if not matchdays.empty:
             next_matchday = int(matchdays.min())
 
+    source_df = future_df if not future_df.empty else fixtures_df
     source_names: list[str] = []
-    if not fixtures_df.empty and "source_name" in fixtures_df.columns:
+    if not source_df.empty and "source_name" in source_df.columns:
         source_names = sorted(
             {
                 str(source).strip()
-                for source in fixtures_df["source_name"].dropna().tolist()
+                for source in source_df["source_name"].dropna().tolist()
                 if str(source).strip()
             }
         )
@@ -169,11 +185,22 @@ def build_fixture_seed_report(season: str | None = None, path: str | Path | None
     return {
         "path": str(seed_path),
         "path_exists": bool(path_exists),
-        "available": bool(path_exists and not fixtures_df.empty),
+        "available": bool(path_exists and not future_df.empty),
         "fixture_count": int(len(fixtures_df)),
+        "future_fixture_count": int(len(future_df)),
         "next_fixture_date": next_date,
         "next_matchday": next_matchday,
         "source_names": source_names,
+        "fixture_status": future_df.attrs.get("fixture_status") or ("fixture_seed" if not future_df.empty else "no_valid_future_fixtures"),
+        "message": future_df.attrs.get("message")
+        or (
+            "Fixture seed valido."
+            if path_exists and not future_df.empty
+            else "Fixture seed presente ma senza fixture future valide."
+            if path_exists
+            else "Fixture seed non presente."
+        ),
+        "warnings": future_df.attrs.get("warnings", []),
     }
 
 
@@ -194,32 +221,117 @@ def _sort_fixtures(fixtures_df: pd.DataFrame) -> pd.DataFrame:
 def _fixture_attrs(source_mode: str, source_label: str, warnings: list[str]) -> dict[str, Any]:
     return {
         "fixture_source": source_mode,
+        "fixture_status": source_mode,
         "source_label": source_label,
         "warnings": list(dict.fromkeys(warnings)),
     }
 
 
-def _filter_seed_fixtures(seed_df: pd.DataFrame, df: pd.DataFrame, season: str | None) -> pd.DataFrame:
+def _latest_result_date(df: pd.DataFrame) -> pd.Timestamp | None:
+    prepared_df = prepare_matches_dataframe(df)
+    if prepared_df.empty or "match_date" not in prepared_df.columns:
+        return None
+    dates = pd.to_datetime(prepared_df["match_date"], errors="coerce").dropna()
+    if dates.empty:
+        return None
+    return dates.max()
+
+
+def validate_fixture_seed(seed_df: pd.DataFrame, season: str | None = None) -> dict[str, Any]:
+    fixtures_df = _ensure_fixture_columns(seed_df)
+    warnings: list[str] = []
+    if fixtures_df.empty:
+        return {
+            "valid": False,
+            "fixtures": fixtures_df,
+            "warnings": ["Fixture seed assente o senza righe valide."],
+        }
+
+    if season and "season" in fixtures_df.columns:
+        fixtures_df = fixtures_df[
+            fixtures_df["season"].isna()
+            | (fixtures_df["season"].astype(str).str.strip() == str(season).strip())
+        ].copy()
+
+    if "competition_code" in fixtures_df.columns:
+        fixtures_df = fixtures_df[
+            fixtures_df["competition_code"].isna()
+            | (fixtures_df["competition_code"].astype(str).str.strip() == "")
+            | (fixtures_df["competition_code"].astype(str).str.strip() == DEFAULT_COMPETITION_CODE)
+        ].copy()
+
+    fixtures_df["match_date"] = pd.to_datetime(fixtures_df["match_date"], errors="coerce")
+    fixtures_df = fixtures_df.dropna(subset=["match_date", "home_team", "away_team"]).copy()
+    if fixtures_df.empty:
+        warnings.append("Fixture seed presente ma senza righe con data e squadre valide.")
+
+    return {
+        "valid": not fixtures_df.empty,
+        "fixtures": _sort_fixtures(fixtures_df),
+        "warnings": warnings,
+    }
+
+
+def filter_future_fixtures(seed_df: pd.DataFrame, df: pd.DataFrame, season: str | None = None) -> pd.DataFrame:
     if seed_df.empty:
-        return seed_df
+        result = pd.DataFrame(columns=FIXTURE_COLUMNS)
+        result.attrs.update(
+            _fixture_attrs(
+                "missing_fixture_seed",
+                "Fixture seed",
+                ["Fixture seed non presente: impossibile costruire una prossima giornata reale."],
+            )
+        )
+        result.attrs["fixture_status"] = "missing_fixture_seed"
+        result.attrs["message"] = "Fixture seed non presente. Aggiorna o crea data/raw/serie_a_fixtures_seed.csv."
+        return result
+
+    validation = validate_fixture_seed(seed_df, season=season)
+    filtered = validation["fixtures"].copy()
+    warnings = list(validation.get("warnings", []))
+    if filtered.empty:
+        filtered.attrs.update(
+            _fixture_attrs(
+                "no_valid_future_fixtures",
+                "Fixture seed",
+                warnings + ["Fixture seed presente ma senza fixture future utilizzabili. Aggiorna il fixture seed."],
+            )
+        )
+        filtered.attrs["fixture_status"] = "no_valid_future_fixtures"
+        filtered.attrs["message"] = "Fixture seed presente ma senza partite future utilizzabili. Aggiorna il fixture seed."
+        return filtered
 
     played_pairs = _played_fixture_pairs(df)
-    filtered = seed_df.copy()
-    if season and "season" in filtered.columns:
-        filtered = filtered[
-            filtered["season"].isna()
-            | (filtered["season"].astype(str).str.strip() == str(season).strip())
-        ].copy()
-    if "competition_code" in filtered.columns:
-        filtered = filtered[
-            filtered["competition_code"].isna()
-            | (filtered["competition_code"].astype(str).str.strip() == DEFAULT_COMPETITION_CODE)
-        ].copy()
-
+    latest_result_date = _latest_result_date(df)
     filtered = filtered[
         ~filtered.apply(lambda row: (str(row["home_team"]), str(row["away_team"])) in played_pairs, axis=1)
     ].copy()
-    return _sort_fixtures(filtered)
+    if latest_result_date is not None and "match_date" in filtered.columns:
+        filtered = filtered[pd.to_datetime(filtered["match_date"], errors="coerce") >= latest_result_date].copy()
+
+    filtered = _sort_fixtures(filtered)
+    if filtered.empty:
+        filtered.attrs.update(
+            _fixture_attrs(
+                "no_valid_future_fixtures",
+                "Fixture seed",
+                warnings + ["Fixture seed presente ma senza fixture future utilizzabili. Aggiorna il fixture seed."],
+            )
+        )
+        filtered.attrs["fixture_status"] = "no_valid_future_fixtures"
+        filtered.attrs["message"] = "Fixture seed presente ma senza partite future utilizzabili. Aggiorna il fixture seed."
+        return filtered
+
+    filtered["fixture_source"] = "fixture_seed"
+    filtered["fixture_note"] = "Partite future lette da fixture seed."
+    filtered.attrs.update(_fixture_attrs("fixture_seed", "Fixture seed", warnings))
+    filtered.attrs["fixture_status"] = "fixture_seed"
+    filtered.attrs["message"] = "Fixture seed valido: prossima giornata costruita da fixture seed."
+    return filtered.reset_index(drop=True)
+
+
+def get_next_fixture_round(fixtures_df: pd.DataFrame, matchday: int | None = None) -> pd.DataFrame:
+    return select_round_fixtures(fixtures_df, matchday=matchday)
 
 
 def _infer_round_from_missing_fixtures(df: pd.DataFrame, season: str | None = None) -> pd.DataFrame:
@@ -282,36 +394,34 @@ def infer_next_round_fixtures(
     season: str | None = None,
     fixture_seed_path: str | Path | None = None,
 ) -> pd.DataFrame:
-    seed_df = load_fixture_seed(fixture_seed_path)
-    if not seed_df.empty:
-        seed_fixtures = _filter_seed_fixtures(seed_df, df, season)
-        if not seed_fixtures.empty:
-            seed_fixtures["fixture_source"] = "fixture_seed"
-            seed_fixtures["fixture_note"] = "Partite future lette da fixture seed."
-            seed_fixtures.attrs.update(
-                _fixture_attrs(
-                    "fixture_seed",
-                    "Fixture seed",
-                    [],
-                )
+    seed_path = Path(fixture_seed_path) if fixture_seed_path is not None else FIXTURE_SEED_PATH
+    seed_df = load_fixture_seed(seed_path)
+    if seed_path.exists() and seed_df.empty:
+        result = pd.DataFrame(columns=FIXTURE_COLUMNS)
+        result.attrs.update(
+            _fixture_attrs(
+                "no_valid_future_fixtures",
+                "Fixture seed",
+                ["Fixture seed presente ma senza fixture future valide. Aggiorna il fixture seed."],
             )
-            return seed_fixtures.reset_index(drop=True)
+        )
+        result.attrs["message"] = "Fixture seed presente ma senza partite future utilizzabili. Aggiorna il fixture seed."
+        return result
+    return filter_future_fixtures(seed_df, df, season=season)
 
+
+def infer_missing_fixtures_simulation(df: pd.DataFrame, season: str | None = None) -> pd.DataFrame:
     inferred = _infer_round_from_missing_fixtures(df, season=season)
-    if seed_df.empty:
-        inferred.attrs["warnings"] = list(
-            dict.fromkeys(
-                inferred.attrs.get("warnings", [])
-                + ["Fixture seed non presente: uso partite mancanti inferite dal calendario home/away."]
-            )
+    inferred.attrs["fixture_source"] = "inferred_missing"
+    inferred.attrs["fixture_status"] = "inferred_missing"
+    inferred.attrs["source_label"] = "Simulazione partite mancanti inferite"
+    inferred.attrs["message"] = "Questa non e la prossima giornata ufficiale. Sono partite mancanti inferite."
+    inferred.attrs["warnings"] = list(
+        dict.fromkeys(
+            inferred.attrs.get("warnings", [])
+            + ["Questa non e la prossima giornata ufficiale. Sono partite mancanti inferite."]
         )
-    else:
-        inferred.attrs["warnings"] = list(
-            dict.fromkeys(
-                inferred.attrs.get("warnings", [])
-                + ["Fixture seed presente ma senza partite future utilizzabili: uso fallback inferito."]
-            )
-        )
+    )
     return inferred
 
 
@@ -1141,6 +1251,8 @@ def build_round_analysis(
         fixtures_df = _ensure_fixture_columns(fixtures_df)
 
     source_mode = fixtures_df.attrs.get("fixture_source")
+    fixture_status = fixtures_df.attrs.get("fixture_status")
+    fixture_message = fixtures_df.attrs.get("message")
     source_label = fixtures_df.attrs.get("source_label")
     warnings = list(fixtures_df.attrs.get("warnings", []))
     if not source_mode and "fixture_source" in fixtures_df.columns and not fixtures_df.empty:
@@ -1154,8 +1266,10 @@ def build_round_analysis(
     if fixtures_df.empty:
         return {
             "ok": False,
-            "message": "Nessuna partita futura o mancante disponibile per costruire l'analisi giornata.",
+            "message": fixture_message
+            or "Nessuna partita disponibile per costruire l'analisi giornata nella modalita selezionata.",
             "fixture_source": source_mode,
+            "fixture_status": fixture_status or source_mode,
             "source_label": source_label,
             "warnings": warnings,
         }

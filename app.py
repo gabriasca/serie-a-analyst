@@ -91,8 +91,9 @@ status_error = None
 try:
     bootstrap_database()
     db_status = safe_status(get_database_status())
-    freshness_report = build_data_freshness_report(fetch_matches())
-    fixture_seed_report = build_fixture_seed_report()
+    matches_df = fetch_matches()
+    freshness_report = build_data_freshness_report(matches_df)
+    fixture_seed_report = build_fixture_seed_report(results_df=matches_df)
 except Exception as exc:  # pragma: no cover - defensive fallback for cloud/runtime issues
     db_status = safe_status({})
     freshness_report = build_data_freshness_report(pd.DataFrame())
@@ -100,9 +101,12 @@ except Exception as exc:  # pragma: no cover - defensive fallback for cloud/runt
         "available": False,
         "path_exists": False,
         "fixture_count": 0,
+        "future_fixture_count": 0,
         "next_fixture_date": None,
         "next_matchday": None,
         "source_names": [],
+        "message": "Stato fixture seed non disponibile.",
+        "warnings": [],
     }
     status_error = str(exc)
 
@@ -157,16 +161,23 @@ render_freshness_message(
 
 st.subheader("Fixture prossima giornata")
 fixture_col1, fixture_col2, fixture_col3 = st.columns(3)
-fixture_col1.metric("Fixture seed", "Presente" if fixture_seed_report.get("available") else "Assente")
+fixture_col1.metric("Fixture seed", "Presente" if fixture_seed_report.get("path_exists") else "Assente")
 fixture_col2.metric("Prossima data fixture", fixture_seed_report.get("next_fixture_date") or "n/d")
-fixture_col3.metric("Fixture nel seed", fixture_seed_report.get("fixture_count", 0))
+fixture_col3.metric("Fixture future valide", fixture_seed_report.get("future_fixture_count", 0))
 if fixture_seed_report.get("next_matchday"):
     st.write(f"Prossima giornata fixture: {fixture_seed_report.get('next_matchday')}")
 sources = fixture_seed_report.get("source_names") or []
 if sources:
     st.write("Fonte fixture: " + ", ".join(str(source) for source in sources))
+if fixture_seed_report.get("path_exists") and fixture_seed_report.get("future_fixture_count", 0) == 0:
+    st.warning("Fixture seed presente ma senza fixture future valide.")
+elif not fixture_seed_report.get("path_exists"):
+    st.caption(
+        "Fixture seed non presente: Analisi Giornata reale non e disponibile. "
+        "La simulazione inferita resta una modalita separata."
+    )
 else:
-    st.caption("Fixture seed non presente: Analisi Giornata usera il fallback inferito.")
+    st.caption(f"Fixture totali nel seed: {fixture_seed_report.get('fixture_count', 0)}")
 
 st.warning(
     "Le previsioni mostrate nell'app sono stime statistiche basate sui dati disponibili, "

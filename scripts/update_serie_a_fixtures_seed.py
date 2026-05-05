@@ -25,7 +25,7 @@ from src.config import (
 from src.data_import import load_csv_to_dataframe, normalize_columns, normalize_team_name, parse_match_dates
 
 
-DEFAULT_SOURCE_NAME = "football-data.co.uk fixtures"
+DEFAULT_SOURCE_NAME = "football-data.co.uk"
 STRICT_UPDATE_ENV = "FOOTBALL_DATA_FIXTURES_STRICT_UPDATE"
 FIXTURE_COLUMNS = [
     "season",
@@ -69,6 +69,11 @@ def _safe_string(value: Any) -> str:
 
 def _prepare_source_rows(raw_df: pd.DataFrame, url: str) -> pd.DataFrame:
     normalized_df, _ = normalize_columns(raw_df)
+    if "div" in normalized_df.columns:
+        normalized_df = normalized_df[normalized_df["div"].astype(str).str.strip().str.upper() == "I1"].copy()
+        if normalized_df.empty:
+            raise ValueError("CSV fixture scaricato senza righe Div=I1.")
+
     required_columns = {"match_date", "home_team", "away_team"}
     missing_columns = required_columns - set(normalized_df.columns)
     if missing_columns:
@@ -88,15 +93,10 @@ def _prepare_source_rows(raw_df: pd.DataFrame, url: str) -> pd.DataFrame:
         fixtures_df["season"] = infer_season_from_url(url)
     fixtures_df["season"] = fixtures_df["season"].fillna(infer_season_from_url(url))
 
-    teams = sorted(
-        set(fixtures_df["home_team"].dropna().astype(str).tolist())
-        | set(fixtures_df["away_team"].dropna().astype(str).tolist())
-    )
-    matches_per_round = max(len(teams) // 2, 1)
     if "matchday" in fixtures_df.columns and fixtures_df["matchday"].notna().any():
         fixtures_df["matchday"] = pd.to_numeric(fixtures_df["matchday"], errors="coerce")
     else:
-        fixtures_df["matchday"] = (fixtures_df["_source_order"] // matches_per_round) + 1
+        fixtures_df["matchday"] = pd.NA
 
     for goal_column in ["home_goals", "away_goals"]:
         if goal_column not in fixtures_df.columns:
@@ -154,7 +154,7 @@ def _select_fixture_candidates(source_df: pd.DataFrame) -> pd.DataFrame:
     )
     if has_seed_reference:
         missing_from_seed_mask = ~source_df.apply(lambda row: _fixture_key(row) in seed_match_keys, axis=1)
-        selected = source_df[unfinished_mask | missing_from_seed_mask].copy()
+        selected = source_df[unfinished_mask & missing_from_seed_mask].copy()
     else:
         selected = source_df[unfinished_mask].copy()
 
@@ -184,6 +184,10 @@ def build_fixture_seed(url: str = FOOTBALL_DATA_SERIE_A_FIXTURES_URL) -> tuple[p
             warnings.append(
                 f"Warning: prima giornata fixture con solo {first_round_size} partite; il calendario potrebbe essere parziale."
             )
+    elif len(selected_df) < expected_round_size:
+        warnings.append(
+            f"Warning: fixture seed con solo {len(selected_df)} partite future; il calendario potrebbe essere parziale."
+        )
 
     fixture_df = selected_df[FIXTURE_COLUMNS].copy()
     fixture_df["match_date"] = pd.to_datetime(fixture_df["match_date"], errors="coerce").dt.strftime("%Y-%m-%d")

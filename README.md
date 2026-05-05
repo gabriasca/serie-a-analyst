@@ -207,7 +207,7 @@ Limiti:
 
 ## Analisi Giornata
 
-La pagina `Analisi Giornata` genera una lettura partita per partita della prossima giornata o delle prossime partite disponibili.
+La pagina `Analisi Giornata` genera una lettura partita per partita della prossima giornata solo quando esiste un fixture seed valido. Le partite mancanti inferite restano disponibili, ma solo come simulazione esplicita.
 
 Usa:
 
@@ -219,7 +219,8 @@ Usa:
 Fonte partite:
 
 - se esiste `data/raw/serie_a_fixtures_seed.csv`, la pagina usa le partite future non ancora giocate presenti nel seed
-- se il fixture seed non esiste, usa le partite mancanti inferite dal calendario home/away, con warning esplicito
+- se il fixture seed esiste ma non contiene fixture future valide, la pagina non passa automaticamente alle partite inferite
+- la modalita `Simulazione partite mancanti inferite` va scelta esplicitamente e non rappresenta la prossima giornata ufficiale
 - la UI non scarica internet, non chiama API e non usa calendario ufficiale se non e stato seedato
 
 Aggiornamento fixture seed:
@@ -227,6 +228,8 @@ Aggiornamento fixture seed:
 - lo script `scripts/update_serie_a_fixtures_seed.py` aggiorna `data/raw/serie_a_fixtures_seed.csv`
 - la URL si configura con `FOOTBALL_DATA_SERIE_A_FIXTURES_URL`
 - se la variabile non e impostata, usa la stessa URL football-data gia configurata per il seed Serie A
+- il CSV viene normalizzato da colonne football-data (`Div`, `Date`, `Time`, `HomeTeam`, `AwayTeam`) e filtrato su `Div=I1`
+- se la fonte non fornisce una giornata affidabile, `matchday` resta vuoto e la pagina raggruppa il primo blocco di fixture ordinate per data
 - il workflow `.github/workflows/update-fixtures.yml` puo girare manualmente o ogni giorno
 - l'aggiornamento e best-effort: se la fonte non e raggiungibile e il fixture seed esiste gia, il file esistente viene mantenuto
 - lo script non modifica `data/raw/serie_a_seed.csv` e non scrive nel database
@@ -246,7 +249,10 @@ Limiti:
 - non usa quote o scommesse
 - non inventa lineup, assenze, infortuni o squalifiche
 - non usa xG reali shot-by-shot
-- se mancano fixture seed o competizioni extra, la lettura del calendario e parziale
+- se il fixture seed e assente o stale, l'analisi reale non mostra partite inferite al posto della prossima giornata
+- la simulazione inferita serve solo per esplorare partite mancanti teoriche del calendario home/away
+- il CSV fixture puo essere parziale o non aggiornato rispetto ai risultati caricati; Home e Import Dati mostrano quante fixture future valide restano
+- se mancano competizioni extra, la lettura del calendario e parziale
 - non modifica predictor base e non modifica la `Proiezione Classifica`
 
 ## Schedule & Competition Context
