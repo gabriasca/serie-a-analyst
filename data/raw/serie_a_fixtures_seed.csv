@@ -1,9 +1,11 @@
 season,match_date,matchday,home_team,away_team,competition_code,competition_name,source_name,source_url
-2025-2026,2026-05-01,35,Pisa,Lecce,ITA_SERIE_A,Serie A,football-data.co.uk fixtures,https://www.football-data.co.uk/mmz4281/2526/I1.csv
-2025-2026,2026-05-02,35,Atalanta,Genoa,ITA_SERIE_A,Serie A,football-data.co.uk fixtures,https://www.football-data.co.uk/mmz4281/2526/I1.csv
-2025-2026,2026-05-02,35,Como,Napoli,ITA_SERIE_A,Serie A,football-data.co.uk fixtures,https://www.football-data.co.uk/mmz4281/2526/I1.csv
-2025-2026,2026-05-02,35,Udinese,Torino,ITA_SERIE_A,Serie A,football-data.co.uk fixtures,https://www.football-data.co.uk/mmz4281/2526/I1.csv
-2025-2026,2026-05-03,35,Bologna,Cagliari,ITA_SERIE_A,Serie A,football-data.co.uk fixtures,https://www.football-data.co.uk/mmz4281/2526/I1.csv
-2025-2026,2026-05-03,35,Inter,Parma,ITA_SERIE_A,Serie A,football-data.co.uk fixtures,https://www.football-data.co.uk/mmz4281/2526/I1.csv
-2025-2026,2026-05-03,35,Juventus,Verona,ITA_SERIE_A,Serie A,football-data.co.uk fixtures,https://www.football-data.co.uk/mmz4281/2526/I1.csv
-2025-2026,2026-05-03,35,Sassuolo,Milan,ITA_SERIE_A,Serie A,football-data.co.uk fixtures,https://www.football-data.co.uk/mmz4281/2526/I1.csv
+2025-2026,2026-05-08,36,Torino,Sassuolo,ITA_SERIE_A,Serie A,manual_fixture_seed,https://en.legaseriea.it/serie-a/fixtures-results
+2025-2026,2026-05-09,36,Cagliari,Udinese,ITA_SERIE_A,Serie A,manual_fixture_seed,https://en.legaseriea.it/serie-a/fixtures-results
+2025-2026,2026-05-09,36,Lazio,Inter,ITA_SERIE_A,Serie A,manual_fixture_seed,https://en.legaseriea.it/serie-a/fixtures-results
+2025-2026,2026-05-09,36,Lecce,Juventus,ITA_SERIE_A,Serie A,manual_fixture_seed,https://en.legaseriea.it/serie-a/fixtures-results
+2025-2026,2026-05-10,36,Verona,Como,ITA_SERIE_A,Serie A,manual_fixture_seed,https://en.legaseriea.it/serie-a/fixtures-results
+2025-2026,2026-05-10,36,Cremonese,Pisa,ITA_SERIE_A,Serie A,manual_fixture_seed,https://en.legaseriea.it/serie-a/fixtures-results
+2025-2026,2026-05-10,36,Fiorentina,Genoa,ITA_SERIE_A,Serie A,manual_fixture_seed,https://en.legaseriea.it/serie-a/fixtures-results
+2025-2026,2026-05-10,36,Parma,Roma,ITA_SERIE_A,Serie A,manual_fixture_seed,https://en.legaseriea.it/serie-a/fixtures-results
+2025-2026,2026-05-10,36,Milan,Atalanta,ITA_SERIE_A,Serie A,manual_fixture_seed,https://en.legaseriea.it/serie-a/fixtures-results
+2025-2026,2026-05-11,36,Napoli,Bologna,ITA_SERIE_A,Serie A,manual_fixture_seed,https://en.legaseriea.it/serie-a/fixtures-results
