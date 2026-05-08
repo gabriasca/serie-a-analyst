@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,12 @@ FIXTURE_COLUMNS = [
     "source_url",
 ]
 OUTCOME_KEYS = ("1", "X", "2")
+DRAW_RISK_HIGH = 60.0
+DRAW_RISK_MEDIUM = 45.0
+UPSET_RISK_HIGH = 60.0
+UPSET_RISK_MEDIUM = 45.0
+CONFIDENCE_HIGH = 70.0
+CONFIDENCE_LOW = 45.0
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -67,6 +74,61 @@ def _probability_gap(probabilities: dict[str, Any] | None) -> float | None:
     if len(values) < 2 or values[0] <= 0:
         return None
     return values[0] - values[1]
+
+
+def _risk_level(value: Any, high: float = DRAW_RISK_HIGH, medium: float = DRAW_RISK_MEDIUM) -> str:
+    score = _safe_float(value)
+    if score >= high:
+        return "alto"
+    if score >= medium:
+        return "medio"
+    return "basso"
+
+
+def _confidence_level(value: Any) -> str:
+    score = _safe_float(value, 50.0)
+    if score >= CONFIDENCE_HIGH:
+        return "alta"
+    if score < CONFIDENCE_LOW:
+        return "bassa"
+    return "media"
+
+
+def _dominant_probability(probabilities: dict[str, Any] | None) -> tuple[str | None, float]:
+    normalized = _normalize_probabilities(probabilities)
+    if sum(normalized.values()) <= 0:
+        return None, 0.0
+    favorite = max(OUTCOME_KEYS, key=lambda key: normalized.get(key, 0.0))
+    return favorite, normalized.get(favorite, 0.0)
+
+
+def _probability_reading(probability: float) -> str:
+    if probability >= 0.60:
+        return "un vantaggio chiaro"
+    if probability >= 0.50:
+        return "un leggero vantaggio"
+    if probability >= 0.40:
+        return "una leggera tendenza in una partita aperta"
+    return "una partita equilibrata"
+
+
+def deduplicate_notes(notes: list[str], limit: int | None = None) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for note in notes:
+        text = " ".join(str(note or "").split())
+        if not text:
+            continue
+        key = text.lower()
+        key = re.sub(r"\b(calendario|coppe|europee|competizioni)\b", "calendario", key)
+        key = re.sub(r"\b(lineup|assenze|infortuni|squalifiche)\b", "assenze", key)
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+        if limit is not None and len(cleaned) >= limit:
+            break
+    return cleaned
 
 
 def _match_title(home_team: str, away_team: str) -> str:
@@ -472,10 +534,10 @@ def classify_match_volatility(draw_risk: float | None, upset_risk: float | None,
     draw_risk = _safe_float(draw_risk, 50.0)
     upset_risk = _safe_float(upset_risk, 50.0)
     confidence = _safe_float(confidence, 50.0)
-    if confidence < 42 or draw_risk >= 68 or upset_risk >= 68:
+    if confidence < CONFIDENCE_LOW or draw_risk >= DRAW_RISK_HIGH or upset_risk >= UPSET_RISK_HIGH:
         return "alta"
-    if confidence < 58 or draw_risk >= 56 or upset_risk >= 56:
-        return "media"
+    if draw_risk >= DRAW_RISK_MEDIUM or upset_risk >= UPSET_RISK_MEDIUM or confidence < CONFIDENCE_HIGH:
+        return "moderata"
     return "bassa"
 
 
@@ -497,9 +559,9 @@ def classify_match_interest(
     volatility = classify_match_volatility(draw_risk, upset_risk, confidence)
     if contextual_gap is not None and contextual_gap <= 0.07:
         return "molto equilibrata"
-    if _safe_float(draw_risk, 0.0) >= 62:
+    if _safe_float(draw_risk, 0.0) >= DRAW_RISK_HIGH:
         return "alto rischio pareggio"
-    if _safe_float(upset_risk, 0.0) >= 62:
+    if _safe_float(upset_risk, 0.0) >= UPSET_RISK_HIGH:
         return "alto rischio upset"
     if volatility == "alta":
         return "partita volatile"
@@ -516,17 +578,21 @@ def classify_match_type(
     confidence: float | None,
 ) -> str:
     contextual_gap = _probability_gap(contextual_probabilities)
-    if _safe_float(draw_risk, 0.0) >= 65:
+    if _safe_float(draw_risk, 0.0) >= DRAW_RISK_HIGH:
         return "alto rischio pareggio"
-    if _safe_float(upset_risk, 0.0) >= 65:
+    if _safe_float(upset_risk, 0.0) >= UPSET_RISK_HIGH:
         return "alto rischio upset"
-    if _safe_float(confidence, 50.0) < 45:
+    if _safe_float(confidence, 50.0) < CONFIDENCE_LOW:
         return "bassa confidenza"
     if contextual_gap is not None and contextual_gap <= 0.08:
         return "equilibrata"
-    if contextual_gap is not None and contextual_gap >= 0.20 and _safe_float(upset_risk, 0.0) >= 55:
+    if contextual_gap is not None and contextual_gap >= 0.20 and _safe_float(upset_risk, 0.0) >= UPSET_RISK_MEDIUM:
         return "favorita chiara ma attenzione al contesto"
-    if _safe_float(confidence, 50.0) >= 65 and _safe_float(draw_risk, 0.0) < 56 and _safe_float(upset_risk, 0.0) < 56:
+    if (
+        _safe_float(confidence, 50.0) >= CONFIDENCE_HIGH
+        and _safe_float(draw_risk, 0.0) < DRAW_RISK_MEDIUM
+        and _safe_float(upset_risk, 0.0) < UPSET_RISK_MEDIUM
+    ):
         return "lettura stabile"
     return "matchup aperto"
 
@@ -579,55 +645,80 @@ def classify_reading_level(match_analysis: dict[str, Any]) -> str:
     probability_gap = _probability_gap(contextual_probabilities)
     volatility_score = _safe_float(match_analysis.get("volatility_score"), 50.0)
 
-    if draw_risk >= 65:
+    if draw_risk >= DRAW_RISK_HIGH:
         return "rischio pareggio"
-    if upset_risk >= 65:
+    if upset_risk >= UPSET_RISK_HIGH:
         return "rischio upset"
-    if confidence < 42:
+    if confidence < CONFIDENCE_LOW:
         return "alta incertezza"
-    if volatility_score >= 62 or match_analysis.get("volatility") == "alta":
+    if match_analysis.get("volatility") == "alta":
         return "volatile"
     if probability_gap is not None and probability_gap <= 0.08:
         return "equilibrata"
-    if confidence >= 65 and draw_risk < 56 and upset_risk < 56:
+    if confidence >= CONFIDENCE_HIGH and draw_risk < DRAW_RISK_MEDIUM and upset_risk < UPSET_RISK_MEDIUM:
         return "stabile"
-    return "equilibrata" if probability_gap is not None and probability_gap <= 0.12 else "volatile"
+    if volatility_score >= 62:
+        return "volatile"
+    return "equilibrata" if probability_gap is not None and probability_gap <= 0.12 else "stabile"
 
 
 def build_main_scenario(match_analysis: dict[str, Any]) -> str:
     prediction, contextual, contextual_probabilities = _match_context(match_analysis)
     home_team = str(match_analysis.get("home_team") or "La squadra di casa")
     away_team = str(match_analysis.get("away_team") or "la squadra ospite")
+    contextual_favorite, contextual_probability = _dominant_probability(contextual_probabilities)
     favorite_label = _match_favorite_label(match_analysis, contextual_probabilities)
+    base_favorite_key = _favorite_from_probabilities(prediction.get("probabilities", {}))
     base_favorite = _match_favorite_label(match_analysis, prediction.get("probabilities", {}))
     draw_risk = _safe_float(contextual.get("draw_risk"), 50.0)
     upset_risk = _safe_float(contextual.get("upset_risk"), 50.0)
     confidence = _safe_float(contextual.get("confidence"), 50.0)
-    probability_gap = _probability_gap(contextual_probabilities)
-    level = classify_reading_level(match_analysis)
+    reading = _probability_reading(contextual_probability)
+    draw_level = _risk_level(draw_risk)
+    upset_level = _risk_level(upset_risk, high=UPSET_RISK_HIGH, medium=UPSET_RISK_MEDIUM)
+    confidence_level = _confidence_level(confidence)
 
-    opening = "Dato osservato: il campione stagionale alimenta una lettura "
-    if probability_gap is not None and probability_gap <= 0.08:
-        opening += "molto equilibrata"
-    elif favorite_label == "pareggio":
-        opening += "orientata a una gara bloccata"
-    elif favorite_label == base_favorite:
-        opening += f"coerente tra baseline e contesto, con {favorite_label} davanti"
+    if contextual_favorite == "X":
+        opening = (
+            "La lettura contestuale vede il pareggio come esito molto presente: "
+            "la partita appare equilibrata e senza una direzione netta."
+        )
+    elif favorite_label == "nessun favorito netto":
+        opening = f"La lettura contestuale non trova un favorito chiaro tra {home_team} e {away_team}."
     else:
-        opening += f"in cui il contesto ribilancia la baseline verso {favorite_label}"
+        opening = f"La lettura contestuale indica {favorite_label} con {reading}."
 
-    details = [
-        opening + ".",
-        f"Indicatore interno: livello lettura {level}, draw risk {draw_risk:.1f}/100, upset risk {upset_risk:.1f}/100 e confidence {confidence:.1f}/100.",
-    ]
+    details = [opening]
+    if prediction.get("ok") and contextual_favorite == base_favorite_key:
+        details.append(f"Il predictor base va nella stessa direzione: {base_favorite} resta il riferimento principale.")
+    elif prediction.get("ok"):
+        details.append(
+            f"Il contesto modifica la baseline: il modello base guardava prima a {base_favorite}, "
+            f"mentre la lettura v2 sposta il peso verso {favorite_label}."
+        )
+
+    if draw_level == "alto":
+        details.append("Il rischio pareggio e alto, quindi il vantaggio va letto con prudenza.")
+    elif draw_level == "medio":
+        details.append("Il rischio pareggio e medio: puo pesare se il match resta bloccato.")
+    else:
+        details.append("Il rischio pareggio non emerge come segnale forte.")
+
+    if upset_level == "alto":
+        details.append("L'upset risk e alto: il favorito contestuale non ha un margine davvero protetto.")
+    elif upset_level == "medio":
+        details.append("L'upset risk e medio: c'e spazio per uno scenario meno lineare del favorito.")
+    else:
+        details.append(f"La confidence e {confidence_level} e l'upset risk resta basso.")
+
     if prediction.get("ok"):
         details.append(
-            f"Ipotesi prudente: con gol attesi interni {prediction.get('expected_goals_home', 0):.2f}-{prediction.get('expected_goals_away', 0):.2f}, "
-            f"{home_team} e {away_team} sembrano separati da margini contenuti."
+            f"I gol attesi interni del modello sono {prediction.get('expected_goals_home', 0):.2f}-{prediction.get('expected_goals_away', 0):.2f}; "
+            "non sono dati shot-by-shot e non includono lineup o assenze."
         )
     else:
-        details.append("Dato mancante: il predictor base non e pienamente disponibile, quindi lo scenario resta piu qualitativo.")
-    return " ".join(details)
+        details.append("Il predictor base non e pienamente disponibile, quindi lo scenario resta piu qualitativo.")
+    return " ".join(details[:6])
 
 
 def build_alternative_scenario(match_analysis: dict[str, Any]) -> str:
@@ -635,33 +726,40 @@ def build_alternative_scenario(match_analysis: dict[str, Any]) -> str:
     home_team = str(match_analysis.get("home_team") or "La squadra di casa")
     away_team = str(match_analysis.get("away_team") or "la squadra ospite")
     favorite = _favorite_from_probabilities(contextual_probabilities)
+    favorite_label = _match_favorite_label(match_analysis, contextual_probabilities)
     draw_risk = _safe_float(contextual.get("draw_risk"), 50.0)
     upset_risk = _safe_float(contextual.get("upset_risk"), 50.0)
     confidence = _safe_float(contextual.get("confidence"), 50.0)
+    probability_gap = _probability_gap(contextual_probabilities)
     matchup = match_analysis.get("matchup_analysis", {}) or {}
     mismatches = matchup.get("mismatches", [])
 
-    if draw_risk >= 60:
+    if draw_risk >= DRAW_RISK_MEDIUM:
         return (
-            "Ipotesi prudente: se il ritmo resta basso o le due squadre si neutralizzano, "
-            "lo scenario alternativo e una partita piu chiusa di quanto suggerisca il favorito iniziale."
+            "Lo scenario alternativo e una partita piu bloccata: il pareggio pesa piu del vantaggio tecnico "
+            "se il ritmo resta basso o le due squadre si neutralizzano presto."
         )
-    if upset_risk >= 58 and favorite in {"1", "2"}:
+    if upset_risk >= UPSET_RISK_MEDIUM and favorite in {"1", "2"}:
         underdog = away_team if favorite == "1" else home_team
         return (
-            f"Ipotesi prudente: se {underdog} sfrutta il suo mismatch migliore o il momento recente, "
-            "il margine del favorito puo ridursi molto."
+            f"Lo scenario alternativo e che {favorite_label} non trasformi il vantaggio nei dati in controllo della partita. "
+            f"In quel caso {underdog} puo restare dentro il match sfruttando il primo momento favorevole."
         )
-    if confidence < 45:
+    if confidence < CONFIDENCE_LOW:
         return (
-            "Ipotesi prudente: con segnali contrastanti, lo scenario alternativo e che la gara prenda una direzione diversa "
-            "appena un episodio rompe l'equilibrio statistico."
+            "Lo scenario alternativo pesa perche i segnali sono poco coerenti: un episodio o una scelta iniziale "
+            "puo cambiare la direzione della partita piu del solito."
+        )
+    if probability_gap is not None and probability_gap <= 0.08:
+        return (
+            "Lo scenario alternativo e una gara decisa da dettagli: le probabilita sono vicine e una piccola variazione "
+            "di efficienza puo spostare il peso da un lato all'altro."
         )
     if isinstance(mismatches, list) and len(mismatches) > 1:
-        return f"Ipotesi prudente: lo scenario alternativo nasce da questo segnale secondario: {mismatches[1]}"
+        return f"Lo scenario alternativo nasce dal secondo mismatch piu visibile: {mismatches[1]}"
     if prediction.get("ok") and favorite == "X":
-        return "Ipotesi prudente: se una delle due squadre converte meglio del proprio volume medio, il pareggio puo perdere peso rapidamente."
-    return "Ipotesi prudente: lo scenario alternativo dipende soprattutto da episodi non presenti nei dati, come scelte iniziali, assenze e gestione del ritmo."
+        return "Lo scenario alternativo e che una squadra converta meglio del proprio volume medio, facendo perdere peso al pareggio."
+    return "Lo scenario alternativo dipende soprattutto da elementi non presenti nei dati: lineup, assenze, episodi e gestione del ritmo."
 
 
 def build_reliable_and_fragile_signals(match_analysis: dict[str, Any]) -> dict[str, str]:
@@ -669,36 +767,45 @@ def build_reliable_and_fragile_signals(match_analysis: dict[str, Any]) -> dict[s
     matchup = match_analysis.get("matchup_analysis", {}) or {}
     schedule_context = matchup.get("schedule_context", {}) if isinstance(matchup, dict) else {}
     probability_gap = _probability_gap(contextual_probabilities)
+    contextual_favorite, contextual_probability = _dominant_probability(contextual_probabilities)
+    favorite_label = _match_favorite_label(match_analysis, contextual_probabilities)
+    base_favorite = _favorite_from_probabilities(prediction.get("probabilities", {}))
     confidence = _safe_float(contextual.get("confidence"), 50.0)
     draw_risk = _safe_float(contextual.get("draw_risk"), 50.0)
     upset_risk = _safe_float(contextual.get("upset_risk"), 50.0)
 
-    if prediction.get("ok") and confidence >= 62:
-        reliable = "Dato osservato + indicatore interno: baseline Poisson e confidence sono abbastanza coerenti."
+    if prediction.get("ok") and contextual_favorite == base_favorite and confidence >= CONFIDENCE_HIGH:
+        reliable = f"Confidence alta e predictor base coerente: entrambi spingono verso {favorite_label}."
+    elif contextual_probability >= 0.60:
+        reliable = f"Vantaggio chiaro nel modello contestuale: {favorite_label} supera il 60%."
     elif probability_gap is not None and probability_gap <= 0.08:
-        reliable = "Indicatore interno: la parita delle probabilita e il segnale piu solido della lettura."
-    elif draw_risk >= 60:
-        reliable = "Indicatore interno: il draw risk alto e il segnale piu riconoscibile del matchup."
-    elif upset_risk >= 60:
-        reliable = "Indicatore interno: l'upset risk alto e il segnale piu importante da monitorare."
+        reliable = "Probabilita molto equilibrate: la vicinanza tra gli esiti e il segnale piu solido."
+    elif draw_risk >= DRAW_RISK_MEDIUM:
+        reliable = f"Draw risk {_risk_level(draw_risk)}: il pareggio e il segnale da monitorare."
+    elif upset_risk >= UPSET_RISK_MEDIUM:
+        reliable = f"Upset risk {_risk_level(upset_risk, high=UPSET_RISK_HIGH, medium=UPSET_RISK_MEDIUM)}: il favorito non e totalmente protetto."
     else:
-        reliable = "Dato osservato: classifica, forma recente e rendimento casa/fuori restano la base piu stabile."
+        reliable = "Classifica, rendimento casa/fuori e forma recente restano la base piu stabile della lettura."
 
     schedule_partial = False
     if isinstance(schedule_context, dict):
         audit = schedule_context.get("competition_audit", {})
         schedule_partial = bool(isinstance(audit, dict) and audit.get("only_league_data"))
 
-    if schedule_partial:
-        fragile = "Dato fragile: calendario e carico sono parziali perche mancano coppe/europee nel database."
-    elif not prediction.get("ok"):
-        fragile = "Dato fragile: il predictor base non e disponibile in modo completo."
+    if not prediction.get("ok"):
+        fragile = "Predictor base non disponibile in modo completo."
     elif not matchup.get("ok"):
-        fragile = "Dato fragile: Matchup Analysis non e disponibile in modo completo."
-    elif confidence < 45:
-        fragile = "Indicatore interno fragile: confidence bassa, quindi i segnali sono poco coerenti tra loro."
+        fragile = "Matchup Analysis non disponibile in modo completo."
+    elif confidence < CONFIDENCE_LOW:
+        fragile = "Confidence bassa: i segnali interni sono poco coerenti tra loro."
+    elif probability_gap is not None and probability_gap <= 0.08:
+        fragile = "Partita molto equilibrata: piccole variazioni di efficienza possono pesare molto."
+    elif schedule_partial and match_analysis.get("fixture_source") == "inferred_missing":
+        fragile = "Calendario fragile: la partita arriva da simulazione inferita, non da fixture seed."
+    elif schedule_partial and confidence < CONFIDENCE_HIGH:
+        fragile = "Calendario parziale: mancano ancora coppe/europee nel carico recente."
     else:
-        fragile = "Dato mancante: lineup, assenze e informazioni tattiche non sono presenti, quindi la lettura resta incompleta."
+        fragile = "Lineup, assenze e dati tattici granulari non sono disponibili."
 
     return {"reliable": reliable, "fragile": fragile}
 
@@ -777,6 +884,28 @@ def _ranked_match_rows(matches: list[dict[str, Any]], metric_label: str, metric_
     return rows
 
 
+def _threshold_matches(matches: list[dict[str, Any]], metric_key: str, threshold: float, reverse: bool = True) -> list[dict[str, Any]]:
+    filtered = [match for match in matches if _match_metric(match, metric_key) >= threshold]
+    return sorted(filtered, key=lambda item: _match_metric(item, metric_key), reverse=reverse)
+
+
+def _low_confidence_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered = [match for match in matches if _match_metric(match, "confidence", 50.0) < CONFIDENCE_LOW]
+    return sorted(filtered, key=lambda item: _match_metric(item, "confidence", 50.0))
+
+
+def _card_value(match: dict[str, Any], metric_key: str | None = None, suffix: str = "/100") -> str:
+    title = str(match.get("match_title") or "n/d")
+    if not metric_key:
+        return title
+    value = _match_metric(match, metric_key, 50.0)
+    return f"{title} ({value:.1f}{suffix})"
+
+
+def _plural_it(count: int, singular: str, plural: str) -> str:
+    return singular if count == 1 else plural
+
+
 def build_round_headline_summary(match_analyses: list[dict[str, Any]]) -> dict[str, Any]:
     rankings = rank_round_matches(match_analyses)
     if not match_analyses:
@@ -793,26 +922,54 @@ def build_round_headline_summary(match_analyses: list[dict[str, Any]]) -> dict[s
     lowest_confidence = rankings["low_confidence"][0]
     most_volatile = rankings["volatile"][0]
     most_stable = rankings["stable"][0]
+    highest_draw_value = _match_metric(highest_draw, "draw_risk")
+    highest_upset_value = _match_metric(highest_upset, "upset_risk")
+    lowest_confidence_value = _match_metric(lowest_confidence, "confidence", 50.0)
+    most_volatile_label = str(most_volatile.get("volatility") or "bassa")
+    low_confidence_count = len(_low_confidence_matches(match_analyses))
 
     cards = {
         "partita_piu_equilibrata": most_open.get("match_title"),
-        "piu_alto_draw_risk": highest_draw.get("match_title"),
-        "piu_alto_upset_risk": highest_upset.get("match_title"),
-        "confidence_piu_alta": highest_confidence.get("match_title"),
-        "confidence_piu_bassa": lowest_confidence.get("match_title"),
-        "partita_piu_volatile": most_volatile.get("match_title"),
+        "piu_alto_draw_risk": _card_value(highest_draw, "draw_risk"),
+        "piu_alto_upset_risk": _card_value(highest_upset, "upset_risk"),
+        "confidence_piu_alta": _card_value(highest_confidence, "confidence"),
+        "confidence_piu_bassa": _card_value(lowest_confidence, "confidence"),
+        "partita_piu_volatile": f"{most_volatile.get('match_title')} ({most_volatile_label})",
         "partita_piu_stabile": most_stable.get("match_title"),
     }
     tables = {
         "partite_piu_aperte": _ranked_match_rows(rankings["open"][:3], "gap probabilita", "gap"),
-        "alto_draw_risk": _ranked_match_rows(rankings["draw_risk"][:3], "draw risk", "draw_risk"),
-        "alto_upset_risk": _ranked_match_rows(rankings["upset_risk"][:3], "upset risk", "upset_risk"),
-        "bassa_confidence": _ranked_match_rows(rankings["low_confidence"][:3], "confidence", "confidence"),
+        "alto_draw_risk": _ranked_match_rows(
+            _threshold_matches(match_analyses, "draw_risk", DRAW_RISK_HIGH)[:3],
+            "draw risk",
+            "draw_risk",
+        ),
+        "alto_upset_risk": _ranked_match_rows(
+            _threshold_matches(match_analyses, "upset_risk", UPSET_RISK_HIGH)[:3],
+            "upset risk",
+            "upset_risk",
+        ),
+        "bassa_confidence": _ranked_match_rows(_low_confidence_matches(match_analyses)[:3], "confidence", "confidence"),
     }
+    draw_text = (
+        f"Il draw risk alto riguarda {highest_draw['match_title']}."
+        if highest_draw_value >= DRAW_RISK_HIGH
+        else f"Nessun draw risk alto assoluto: il valore relativo piu alto e {highest_draw['match_title']} ({highest_draw_value:.1f}/100)."
+    )
+    upset_text = (
+        f"L'upset risk alto riguarda {highest_upset['match_title']}."
+        if highest_upset_value >= UPSET_RISK_HIGH
+        else f"Nessun upset risk alto assoluto: il valore relativo piu alto e {highest_upset['match_title']} ({highest_upset_value:.1f}/100)."
+    )
+    confidence_text = (
+        f"{low_confidence_count} {_plural_it(low_confidence_count, 'partita e', 'partite sono')} a bassa confidence; la piu fragile e {lowest_confidence['match_title']}."
+        if lowest_confidence_value < CONFIDENCE_LOW
+        else f"Nessuna bassa confidence assoluta: la lettura piu prudente resta {lowest_confidence['match_title']} ({lowest_confidence_value:.1f}/100)."
+    )
     headline = (
         f"La giornata ruota intorno a {most_open['match_title']} come partita piu aperta, "
-        f"{highest_draw['match_title']} per rischio pareggio e {highest_upset['match_title']} per rischio upset. "
-        f"La lettura piu solida e {most_stable['match_title']}, mentre {lowest_confidence['match_title']} richiede piu prudenza."
+        f"mentre {most_stable['match_title']} e la lettura piu stabile. "
+        f"{draw_text} {upset_text} {confidence_text}"
     )
     return {"cards": cards, "tables": tables, "headline": headline}
 
@@ -828,14 +985,16 @@ def build_round_analyst_notes(match_analyses: list[dict[str, Any]], fixture_sour
 
     total = len(match_analyses)
     levels = [str(match.get("livello_lettura") or "") for match in match_analyses]
-    draw_count = sum(1 for match in match_analyses if _match_metric(match, "draw_risk") >= 60)
-    upset_count = sum(1 for match in match_analyses if _match_metric(match, "upset_risk") >= 60)
+    draw_count = sum(1 for match in match_analyses if _match_metric(match, "draw_risk") >= DRAW_RISK_HIGH)
+    upset_count = sum(1 for match in match_analyses if _match_metric(match, "upset_risk") >= UPSET_RISK_HIGH)
     balanced_count = sum(1 for level in levels if level in {"equilibrata", "rischio pareggio", "alta incertezza"})
-    low_confidence_count = sum(1 for match in match_analyses if _match_metric(match, "confidence") < 45)
-    high_confidence_count = sum(1 for match in match_analyses if _match_metric(match, "confidence") >= 65)
+    low_confidence_count = sum(1 for match in match_analyses if _match_metric(match, "confidence") < CONFIDENCE_LOW)
+    high_confidence_count = sum(1 for match in match_analyses if _match_metric(match, "confidence") >= CONFIDENCE_HIGH)
 
     average_confidence = sum(_match_metric(match, "confidence", 50.0) for match in match_analyses) / max(total, 1)
-    if average_confidence >= 62 and low_confidence_count <= max(1, total // 5):
+    if average_confidence >= CONFIDENCE_HIGH and low_confidence_count == 0:
+        reliability_label = "solido"
+    elif average_confidence >= 55 and low_confidence_count <= max(1, total // 5):
         reliability_label = "abbastanza solido"
     elif average_confidence >= 50:
         reliability_label = "medio, da leggere con prudenza"
@@ -850,12 +1009,33 @@ def build_round_analyst_notes(match_analyses: list[dict[str, Any]], fixture_sour
     if fixture_source == "inferred_missing":
         limits.append("Dato fragile: le partite sono inferite e non confermate da fixture seed.")
     limits.append("Indicatore interno: calendario e carico restano parziali se mancano coppe/europee.")
+    limits = deduplicate_notes(limits, limit=4)
+
+    draw_sentence = (
+        f"{draw_count} partite hanno draw risk alto"
+        if draw_count
+        else "nessuna partita supera la soglia alta di draw risk"
+    )
+    upset_sentence = (
+        f"{upset_count} partite hanno upset risk alto"
+        if upset_count
+        else "nessuna partita supera la soglia alta di upset risk"
+    )
+    confidence_sentence = (
+        f"{high_confidence_count} match hanno confidence alta"
+        if high_confidence_count
+        else "nessun match raggiunge confidence alta"
+    )
+    low_confidence_sentence = (
+        f"{low_confidence_count} restano a bassa confidence"
+        if low_confidence_count
+        else "nessun match e sotto la soglia di bassa confidence"
+    )
 
     conclusion = (
         f"Conclusione giornata: {balanced_count} partite su {total} sembrano equilibrate o da leggere con cautela; "
-        f"{draw_count} hanno draw risk alto e {upset_count} hanno upset risk alto. "
-        f"Il quadro generale e {reliability_label}: {high_confidence_count} match hanno confidence alta, "
-        f"mentre {low_confidence_count} restano a bassa confidence. "
+        f"{draw_sentence} e {upset_sentence}. "
+        f"Il quadro generale e {reliability_label}: {confidence_sentence}, mentre {low_confidence_sentence}. "
         "La lettura migliore e usarla come report pre-giornata: separa dati osservati, indicatori interni e ipotesi prudenti, senza trasformarli in certezze."
     )
     return {
@@ -890,7 +1070,16 @@ def _standings_lookup(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
     return lookup
 
 
-def _context_factors_from_engine(context_engine: dict[str, Any]) -> list[str]:
+def _clean_factor_text(text: Any, home_team: str, away_team: str) -> str:
+    cleaned = " ".join(str(text or "").split())
+    cleaned = re.sub(r"\([+-]\d+(?:\.\d+)?\)", "", cleaned).strip()
+    cleaned = cleaned.replace("segnale casa", f"favorisce {home_team}")
+    cleaned = cleaned.replace("segnale trasferta", f"favorisce {away_team}")
+    cleaned = cleaned.replace("segnale neutro", "quadro equilibrato")
+    return cleaned
+
+
+def _context_factors_from_engine(context_engine: dict[str, Any], home_team: str, away_team: str) -> list[str]:
     factors = context_engine.get("weighted_factors", [])
     if not isinstance(factors, list):
         return []
@@ -901,11 +1090,11 @@ def _context_factors_from_engine(context_engine: dict[str, Any]) -> list[str]:
         label = str(factor.get("label") or factor.get("factor") or "Fattore")
         impact = _safe_float(factor.get("weighted_impact"))
         note = str(factor.get("note") or "").strip()
-        direction = "casa" if impact > 0.05 else "trasferta" if impact < -0.05 else "neutro"
+        direction = f"favorisce {home_team}" if impact > 0.05 else f"favorisce {away_team}" if impact < -0.05 else "quadro equilibrato"
         if note:
-            lines.append(f"{label}: segnale {direction} ({impact:+.2f}). {note}")
+            lines.append(f"{label}: {direction}. {note}")
         else:
-            lines.append(f"{label}: segnale {direction} ({impact:+.2f}).")
+            lines.append(f"{label}: {direction}.")
     return lines
 
 
@@ -928,11 +1117,11 @@ def _build_key_factors(match_analysis: dict[str, Any]) -> list[str]:
 
     context_engine = matchup.get("context_engine", {})
     if isinstance(context_engine, dict):
-        factors.extend(_context_factors_from_engine(context_engine))
+        factors.extend(_context_factors_from_engine(context_engine, home_team, away_team))
 
     mismatches = matchup.get("mismatches", [])
     if isinstance(mismatches, list):
-        factors.extend(str(item) for item in mismatches[:2])
+        factors.extend(_clean_factor_text(item, home_team, away_team) for item in mismatches[:2])
 
     schedule_context = matchup.get("schedule_context", {})
     if isinstance(schedule_context, dict) and schedule_context.get("available"):
@@ -944,8 +1133,8 @@ def _build_key_factors(match_analysis: dict[str, Any]) -> list[str]:
         else:
             factors.append("Calendario/riposo: non emerge un vantaggio netto dai dati disponibili.")
 
-    factors.extend(str(item) for item in contextual.get("key_adjustments", [])[:2])
-    unique = [item for item in dict.fromkeys(factors) if item]
+    factors.extend(_clean_factor_text(item, home_team, away_team) for item in contextual.get("key_adjustments", [])[:2])
+    unique = [item for item in dict.fromkeys(_clean_factor_text(item, home_team, away_team) for item in factors) if item]
     return unique[:6]
 
 
@@ -958,12 +1147,16 @@ def build_match_turning_points(match_analysis: dict[str, Any]) -> list[str]:
     confidence = _safe_float(contextual.get("confidence"), 50.0)
 
     points: list[str] = []
-    if confidence < 45:
+    if confidence < CONFIDENCE_LOW:
         points.append("Confidenza bassa: i segnali disponibili sono contrastanti o poco stabili.")
-    if draw_risk >= 58:
-        points.append("Draw risk elevato: il match puo restare bloccato piu a lungo del previsto.")
-    if upset_risk >= 58:
-        points.append("Upset risk elevato: il favorito contestuale non ha un margine abbastanza solido.")
+    if draw_risk >= DRAW_RISK_HIGH:
+        points.append("Draw risk alto: il match puo restare bloccato piu a lungo del previsto.")
+    elif draw_risk >= DRAW_RISK_MEDIUM:
+        points.append("Draw risk medio: il pareggio puo crescere se la partita resta su ritmi bassi.")
+    if upset_risk >= UPSET_RISK_HIGH:
+        points.append("Upset risk alto: il favorito contestuale non ha un margine abbastanza solido.")
+    elif upset_risk >= UPSET_RISK_MEDIUM:
+        points.append("Upset risk medio: il favorito deve trasformare il vantaggio nei dati in controllo reale.")
     if volatility == "alta":
         points.append("Profilo volatile: piccoli episodi possono cambiare molto la lettura statistica.")
     if fixture_source == "inferred_missing":
@@ -976,25 +1169,18 @@ def build_match_turning_points(match_analysis: dict[str, Any]) -> list[str]:
                 points.append(str(warning))
 
     points.append("Lineup, assenze e gestione reale della partita non sono presenti nel database.")
-    return list(dict.fromkeys(points))[:5]
+    return deduplicate_notes(points, limit=4)
 
 
 def build_missing_data_notes(match_analysis: dict[str, Any]) -> list[str]:
     notes = [
-        "Non abbiamo lineup ufficiali pre-partita.",
-        "Non abbiamo infortuni o squalifiche aggiornate.",
-        "Non abbiamo dati tattici live o eventi completi della partita.",
-        "Non abbiamo xG reali shot-by-shot: i gol attesi mostrati sono del modello interno.",
+        "Lineup ufficiali, assenze e squalifiche non sono disponibili.",
+        "Dati tattici granulari ed eventi live non sono presenti.",
+        "I gol attesi mostrati sono del modello interno, non dati shot-by-shot.",
     ]
     if match_analysis.get("fixture_source") == "inferred_missing":
         notes.append("Le partite inferite non sono confermate da calendario ufficiale.")
-    matchup = match_analysis.get("matchup_analysis", {}) or {}
-    schedule_context = matchup.get("schedule_context", {})
-    if isinstance(schedule_context, dict):
-        audit = schedule_context.get("competition_audit", {})
-        if isinstance(audit, dict) and audit.get("only_league_data"):
-            notes.append("Il carico calendario oggi e basato solo sulle partite disponibili, probabilmente solo campionato.")
-    return list(dict.fromkeys(notes))
+    return deduplicate_notes(notes, limit=3)
 
 
 def build_match_narrative(match_analysis: dict[str, Any]) -> str:

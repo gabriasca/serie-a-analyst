@@ -170,6 +170,34 @@ def _display_rank_table(rows: list[dict[str, object]]) -> pd.DataFrame:
     )
 
 
+def _deduplicate_texts(items: list[object], limit: int | None = None) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = " ".join(str(item or "").split())
+        if not text:
+            continue
+        key = text.lower()
+        if "calendario" in key or "coppe" in key or "europee" in key:
+            key = "calendario_parziale"
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+        if limit is not None and len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def _render_rank_section(title: str, rows: list[dict[str, object]], empty_message: str) -> None:
+    st.markdown(f"#### {title}")
+    table = _display_rank_table(rows)
+    if table.empty:
+        st.caption(empty_message)
+    else:
+        st.dataframe(table, use_container_width=True)
+
+
 def _render_overview_card(label: str, value: object, help_text: str = "") -> None:
     st.markdown(f"**{label}**")
     st.write(value or "n/d")
@@ -189,31 +217,39 @@ def _render_round_overview(analysis: dict[str, object]) -> None:
     with card1:
         _render_overview_card("Piu equilibrata", cards.get("partita_piu_equilibrata"), "Probabilita piu vicine tra loro.")
     with card2:
-        _render_overview_card("Draw risk", cards.get("piu_alto_draw_risk"), "Rischio pareggio piu alto.")
+        _render_overview_card("Draw risk piu alto", cards.get("piu_alto_draw_risk"), "Relativo alla giornata; alto solo da 60/100.")
     with card3:
-        _render_overview_card("Upset risk", cards.get("piu_alto_upset_risk"), "Favorito piu esposto al contesto.")
+        _render_overview_card("Upset risk relativo", cards.get("piu_alto_upset_risk"), "Relativo alla giornata; alto solo da 60/100.")
     with card4:
-        _render_overview_card("Confidence alta", cards.get("confidence_piu_alta"), "Lettura piu coerente.")
+        _render_overview_card("Confidence piu alta", cards.get("confidence_piu_alta"), "Alta solo da 70/100.")
 
     card5, card6, card7 = st.columns(3)
     with card5:
-        _render_overview_card("Confidence bassa", cards.get("confidence_piu_bassa"), "Match da leggere con piu prudenza.")
+        _render_overview_card("Confidence piu bassa", cards.get("confidence_piu_bassa"), "Bassa solo sotto 45/100.")
     with card6:
-        _render_overview_card("Piu volatile", cards.get("partita_piu_volatile"), "Rischio di cambio lettura piu alto.")
+        _render_overview_card("Volatilita relativa", cards.get("partita_piu_volatile"), "Alta solo con rischi alti o confidence bassa.")
     with card7:
         _render_overview_card("Piu stabile", cards.get("partita_piu_stabile"), "Segnali piu ordinati.")
 
     table_col1, table_col2 = st.columns(2)
     with table_col1:
-        st.markdown("#### Partite piu aperte")
-        st.dataframe(_display_rank_table(tables.get("partite_piu_aperte", [])), use_container_width=True)
-        st.markdown("#### Alto draw risk")
-        st.dataframe(_display_rank_table(tables.get("alto_draw_risk", [])), use_container_width=True)
+        _render_rank_section("Partite piu aperte", tables.get("partite_piu_aperte", []), "Nessuna partita disponibile per questa classifica.")
+        _render_rank_section(
+            "Draw risk alto",
+            tables.get("alto_draw_risk", []),
+            "Nessuna partita supera la soglia alta; il valore relativo piu alto e nella panoramica.",
+        )
     with table_col2:
-        st.markdown("#### Alto upset risk")
-        st.dataframe(_display_rank_table(tables.get("alto_upset_risk", [])), use_container_width=True)
-        st.markdown("#### Bassa confidence")
-        st.dataframe(_display_rank_table(tables.get("bassa_confidence", [])), use_container_width=True)
+        _render_rank_section(
+            "Upset risk alto",
+            tables.get("alto_upset_risk", []),
+            "Nessuna partita supera la soglia alta; il rischio relativo piu alto e nella panoramica.",
+        )
+        _render_rank_section(
+            "Bassa confidence",
+            tables.get("bassa_confidence", []),
+            "Nessuna partita scende sotto la soglia bassa; la piu prudente e nella panoramica.",
+        )
 
 
 def _render_probability_metrics(title: str, probabilities: dict[str, object]) -> None:
@@ -289,7 +325,10 @@ def _render_match_detail(match: dict[str, object]) -> None:
     st.markdown("#### Dati mancanti")
     _render_bullets(match.get("missing_data_notes", []))
 
-    for warning in contextual.get("warnings", []):
+    contextual_warnings = contextual.get("warnings", [])
+    if not isinstance(contextual_warnings, list):
+        contextual_warnings = [contextual_warnings]
+    for warning in _deduplicate_texts(contextual_warnings, limit=2):
         st.info(warning)
 
 
