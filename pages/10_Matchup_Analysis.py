@@ -83,6 +83,7 @@ bootstrap_database()
 
 st.title("Matchup Analysis")
 st.caption("Analisi statistica basata sui dati disponibili. Non e una certezza e non usa quote.")
+st.caption("Per trasformare questo matchup in un report pre-partita discorsivo, usa Report Discorsivo Partita.")
 
 if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)

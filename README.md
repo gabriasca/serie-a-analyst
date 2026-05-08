@@ -255,6 +255,31 @@ Limiti:
 - se mancano competizioni extra, la lettura del calendario e parziale
 - non modifica predictor base e non modifica la `Proiezione Classifica`
 
+## Report Discorsivo Partita
+
+La pagina `Report Discorsivo Partita` produce una lettura pre-partita piu naturale e riflessiva per una singola gara.
+
+Usa i layer gia presenti:
+
+- predictor base Poisson e Predictor contestuale v2
+- Matchup Analysis e context_engine
+- Report Partita, Studio Squadra, Profilo Squadra e Metriche Avanzate
+- rating Elo, calendario/riposo, forma recente e rendimento casa/fuori
+
+La pagina distingue:
+
+- dati osservati, come classifica, gol, forma e rendimento
+- indicatori interni, come pericolosita offensiva, solidita, draw risk, upset risk e confidence
+- ipotesi prudenti, basate su regole spiegabili
+- dati mancanti, come lineup, assenze, squalifiche, dati giocatore e dati tattici granulari
+
+Limiti:
+
+- non usa quote e non parla di scommesse
+- non inventa moduli, pressing, costruzione dal basso, infortuni o disponibilita dei giocatori
+- non sostituisce predictor base, Proiezione Classifica o Model Review
+- resta una sintesi discorsiva di dati aggregati, non una certezza pre-partita
+
 ## Schedule & Competition Context
 
 Il layer `Schedule & Competition Context v1` misura riposo, carico partite e differenza tra forma campionato e forma su tutte le competizioni disponibili.

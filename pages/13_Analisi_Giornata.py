@@ -338,6 +338,7 @@ bootstrap_database()
 
 st.title("Analisi Giornata")
 st.caption("Analisi statistica basata sui dati disponibili. Non e una certezza e non usa quote.")
+st.caption("Per una lettura piu discorsiva di una singola partita, usa Report Discorsivo Partita.")
 
 if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)

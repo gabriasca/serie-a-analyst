@@ -41,6 +41,7 @@ bootstrap_database()
 st.title("Report Partita")
 st.write("Genera un report pre-partita leggibile usando solo i dati disponibili nell'app.")
 st.caption("Per una lettura dei mismatch, usa la pagina Matchup Analysis.")
+st.caption("Per una lettura piu riflessiva e discorsiva, usa Report Discorsivo Partita.")
 
 if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)
