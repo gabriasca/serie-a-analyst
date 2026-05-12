@@ -2,6 +2,19 @@
 
 Serie A Analyst e un MVP locale costruito con Python, Streamlit, Pandas e SQLite per analizzare dati calcistici della Serie A.
 
+## Struttura pubblica
+
+La versione pubblica espone un menu più pulito con quattro ingressi principali:
+
+- `Home / Classifica` (`app.py`): classifica attuale, stato aggiornamento dati e stato fixture.
+- `Calendario` (`pages/1_Calendario.py`): prossima giornata da fixture seed e sintesi dei match.
+- `Proiezione Classifica` (`pages/2_Proiezione_Classifica.py`): simulazioni finali basate sul predictor base.
+- `Previsione Partita` (`pages/3_Previsione_Partita.py`): previsione base, lettura contestuale e report discorsivo.
+
+Le pagine tecniche precedenti sono state spostate in `archive_pages/` per non comparire nel menu pubblico. Non sono state cancellate: Model Review, Matchup Analysis, Studio Squadra, Metriche Avanzate, Report Discorsivo e gli altri strumenti restano disponibili come codice archiviato e come motori dietro le quinte tramite i moduli in `src/`.
+
+I moduli analitici in `src/` non sono stati rimossi: la nuova UI pubblica continua a usare predictor base, context engine, forecast contestuale, round analysis, narrative report, Elo, metriche avanzate e schedule context dove servono.
+
 L'app consente di:
 
 - importare dati da CSV
