@@ -106,7 +106,7 @@ st.set_page_config(page_title=f"{APP_TITLE} | Report Discorsivo Partita", layout
 bootstrap_database()
 
 st.title("Report Discorsivo Partita")
-st.caption("Analisi basata sui dati disponibili. Non e una certezza e non usa quote.")
+st.caption("Analisi basata sui dati disponibili. Non è una certezza e non usa quote.")
 
 if PUBLIC_DEMO_MODE:
     st.caption(PUBLIC_DEMO_BANNER)
@@ -134,7 +134,7 @@ away_team = st.selectbox("Squadra trasferta", away_options, index=0)
 
 if st.button("Genera report discorsivo"):
     league_df, schedule_df = _load_report_dataframes(selected_season)
-    with st.spinner("Costruisco una lettura discorsiva usando predictor, matchup, identita, metriche e calendario..."):
+    with st.spinner("Costruisco una lettura discorsiva usando predictor, matchup, identità, metriche e calendario..."):
         report = build_narrative_match_report(
             league_df,
             home_team,
@@ -181,18 +181,18 @@ _render_text_block(report.get("probable_match_script"))
 st.subheader("Scenario alternativo")
 _render_text_block(report.get("alternative_match_script"))
 
-st.subheader("Interazione tra identita delle squadre")
+st.subheader("Interazione tra identità delle squadre")
 _render_text_block(report.get("team_identity_interaction"))
 
 col1, col2 = st.columns(2)
 with col1:
-    st.subheader("Dati piu affidabili")
+    st.subheader("Dati più affidabili")
     _render_bullets(report.get("reliable_data", []))
 with col2:
-    st.subheader("Dati piu fragili")
+    st.subheader("Dati più fragili")
     _render_bullets(report.get("fragile_data", []))
 
-st.subheader("Cosa puo cambiare la partita")
+st.subheader("Cosa può cambiare la partita")
 _render_bullets(report.get("what_could_change", []))
 
 st.subheader("Cosa servirebbe sapere prima del match")
@@ -209,7 +209,11 @@ with st.expander("Sezione tecnica opzionale", expanded=False):
     tech_col3.metric("Upset risk", _format_score(technical.get("upset_risk"), "/100"))
     tech_col4.metric("Confidence", _format_score(technical.get("confidence"), "/100"))
 
-    st.markdown("#### Probabilita")
+    goals_col1, goals_col2 = st.columns(2)
+    goals_col1.metric("Gol attesi modello casa", _format_score(technical.get("expected_goals_home")))
+    goals_col2.metric("Gol attesi modello trasferta", _format_score(technical.get("expected_goals_away")))
+
+    st.markdown("#### Probabilità")
     st.dataframe(_technical_probabilities_table(technical), use_container_width=True)
 
     factors_table = _technical_factors_table(technical)

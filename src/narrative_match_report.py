@@ -18,6 +18,16 @@ FORBIDDEN_NARRATIVE_PHRASES = [
     "Dato osservato:",
     "Indicatore interno:",
     "Ipotesi prudente:",
+    "confidence",
+    "draw risk",
+    "upset risk",
+    "Poisson",
+    "gol attesi",
+    "%",
+    "posizione",
+    "driver",
+    "mismatch",
+    "edge",
     "driver principali",
     "I fattori più solidi sono",
     "I fattori piu solidi sono",
@@ -180,7 +190,68 @@ def _volatility_phrase(label: str) -> str:
 
 def _a_team(team: Any) -> str:
     name = str(team or "questa squadra")
+    article = TEAM_ARTICLES.get(name, "")
+    if article == "il":
+        return f"al {name}"
+    if article == "la":
+        return f"alla {name}"
+    if article == "l’":
+        return f"all’{name}"
     return f"ad {name}" if name[:1].lower() in {"a", "e", "i", "o", "u"} else f"a {name}"
+
+
+TEAM_ARTICLES = {
+    "Roma": "la",
+    "Parma": "il",
+    "Juventus": "la",
+    "Milan": "il",
+    "Inter": "l’",
+    "Atalanta": "l’",
+    "Napoli": "il",
+    "Lazio": "la",
+    "Torino": "il",
+    "Sassuolo": "il",
+    "Cagliari": "il",
+    "Udinese": "l’",
+    "Lecce": "il",
+    "Verona": "il",
+    "Como": "il",
+    "Cremonese": "la",
+    "Fiorentina": "la",
+    "Genoa": "il",
+    "Bologna": "il",
+    "Pisa": "il",
+}
+
+
+def team_with_article(team_name: Any, capitalize: bool = False) -> str:
+    name = str(team_name or "la squadra").strip()
+    article = TEAM_ARTICLES.get(name, "")
+    if not article:
+        return name
+    if capitalize:
+        article = "L’" if article == "l’" else article.capitalize()
+    return f"{article}{name}" if article.endswith("’") else f"{article} {name}"
+
+
+def _team_subject(team_name: Any) -> str:
+    return team_with_article(team_name)
+
+
+def _team_subject_cap(team_name: Any) -> str:
+    return team_with_article(team_name, capitalize=True)
+
+
+def _team_genitive(team_name: Any) -> str:
+    name = str(team_name or "la squadra").strip()
+    article = TEAM_ARTICLES.get(name, "")
+    if article == "il":
+        return f"del {name}"
+    if article == "la":
+        return f"della {name}"
+    if article == "l’":
+        return f"dell’{name}"
+    return f"di {name}"
 
 
 def _variant_index(*values: Any, modulo: int = 3) -> int:
@@ -212,7 +283,7 @@ def _metric_edge_phrase(label: Any) -> str:
         "efficienza realizzativa": "una maggiore efficienza nel trasformare le occasioni",
         "dipendenza casa": "un rapporto casa/fuori più favorevole",
         "momento recente": "un momento recente più convincente",
-        "forza calendario": "un contesto calendario che il modello legge in modo leggermente più favorevole",
+        "forza calendario": "un contesto calendario leggermente più favorevole",
         "rating elo": "un profilo di forza più solido",
     }
     return mapping.get(normalized, normalized)
@@ -350,6 +421,12 @@ def _schedule_takeaway(schedule: dict[str, Any], home_team: str, away_team: str)
     return " ".join(pieces[:3])
 
 
+def _schedule_is_material(schedule: dict[str, Any]) -> bool:
+    if not isinstance(schedule, dict) or not schedule.get("available"):
+        return False
+    return abs(_safe_float(schedule.get("rest_advantage"), 0.0)) >= 2
+
+
 def _team_goal_to_confirm(favorite: str, underdog: str, favorite_key: str | None) -> str:
     if favorite_key not in {"1", "2"}:
         return "La squadra che riesce a dare continuità al proprio volume può spostare una gara altrimenti molto sottile."
@@ -413,12 +490,12 @@ def _balanced_edge_sentence(matchup: dict[str, Any], home_team: str, away_team: 
 def _why_favorite_is_ahead(matchup: dict[str, Any], favorite: str, home_team: str, away_team: str) -> str:
     edges = _metric_edges_for_team(matchup, favorite, limit=3)
     if edges:
-        return f"Dai dati disponibili, il vantaggio di {favorite} è sostenuto soprattutto da {_join_phrases(edges)}."
+        return f"Dai dati disponibili, la lettura premia {_team_subject(favorite)}: pesano soprattutto {_join_phrases(edges)}."
     style = matchup.get("style_advantage", {}) if isinstance(matchup, dict) else {}
     style_takeaway = _style_takeaway(style, home_team, away_team)
     if style_takeaway:
         return style_takeaway
-    return f"Il sistema legge {favorite} avanti per la combinazione tra produzione, forma recente e rendimento complessivo."
+    return f"Il sistema legge meglio il profilo di {_team_subject(favorite)} per la combinazione tra produzione, forma recente e rendimento complessivo."
 
 
 def _draw_risk_reason(draw_risk: float, confidence: float, favorite_prob: float, prediction: dict[str, Any]) -> str:
@@ -471,7 +548,7 @@ def _alternative_opening(favorite: str, underdog: str, favorite_prob: float) -> 
         )
     if variant == 1:
         return (
-            f"L'alternativa passa da un vantaggio di {favorite} che resta troppo sottile: se {underdog} rimane agganciata, la lettura iniziale perde stabilità."
+            f"L'alternativa passa da un vantaggio {_team_genitive(favorite)} che resta troppo sottile: se {_team_subject(underdog)} rimane dentro, la lettura iniziale perde stabilità."
         )
     return (
         f"Il match si apre davvero se {favorite} non separa subito i valori: {underdog} può restare in scia e portare la partita su dettagli più piccoli."
@@ -612,6 +689,41 @@ def build_match_opening_reading(report: dict[str, Any]) -> str:
     home_position = table_context.get("home_position")
     away_position = table_context.get("away_position")
 
+    favorite_label = _team_subject(favorite) if favorite_key in {"1", "2"} else "il pareggio"
+    favorite_label_cap = _team_subject_cap(favorite) if favorite_key in {"1", "2"} else "Il pareggio"
+    if favorite_key == "X":
+        sentences = [
+            f"{home_team} - {away_team} sembra una partita da margini sottili, più vicina a un equilibrio da rompere che a un vantaggio già definito."
+        ]
+    elif favorite_prob >= 0.60:
+        sentences = [
+            f"{favorite_label_cap} parte con un vantaggio netto nella lettura complessiva. Non è una partita chiusa, ma il quadro pre-match spinge con decisione dalla sua parte."
+        ]
+    elif favorite_prob >= 0.50:
+        sentences = [
+            f"{favorite_label_cap} parte con qualcosa in più, senza un margine tale da poter considerare la gara già indirizzata."
+        ]
+    else:
+        sentences = [
+            f"La partita resta aperta: {favorite_label} ha una leggera tendenza favorevole, ma il confine tra scenario principale e scenario alternativo è ancora sottile."
+        ]
+
+    if confidence >= 70:
+        sentences.append("La lettura è abbastanza solida perché i segnali principali vanno nella stessa direzione.")
+    elif confidence < 45:
+        sentences.append("La lettura resta fragile, perché i segnali disponibili non sono del tutto allineati.")
+    else:
+        sentences.append("La lettura è discreta ma non blindata: indica una direzione, senza chiudere davvero la partita sulla carta.")
+    if draw_risk >= 60:
+        sentences.append("Il pareggio pesa davvero nella trama: una gara bloccata può cambiare il valore del vantaggio iniziale.")
+    elif draw_risk >= 45:
+        sentences.append("Il pareggio è uno scenario da non ignorare se il ritmo resta basso e nessuna squadra riesce ad allungare.")
+    if upset_risk >= 60 and favorite_key in {"1", "2"}:
+        sentences.append(f"{favorite_label_cap} è favorita, ma resta esposta se non riesce a trasformare il vantaggio teorico in controllo reale.")
+    elif upset_risk >= 45 and favorite_key in {"1", "2"}:
+        sentences.append("La partita può aprirsi se la squadra sfavorita rimane dentro abbastanza a lungo.")
+    return " ".join(sentences)
+
     if favorite_key == "X":
         opening = (
             f"{home_team} - {away_team} nasce come una partita da margini sottili: il pareggio non è una semplice alternativa, "
@@ -688,6 +800,71 @@ def build_probable_match_script(report: dict[str, Any]) -> str:
     upset_risk = _safe_float(contextual.get("upset_risk"), 50.0)
     confidence = _safe_float(contextual.get("confidence"), 50.0)
 
+    favorite_label = _team_subject(favorite) if favorite_key in {"1", "2"} else "chi riesce a dare continuità alla propria gara"
+    favorite_label_cap = _team_subject_cap(favorite) if favorite_key in {"1", "2"} else "La squadra più continua"
+    underdog_label = _team_subject(underdog) if favorite_key in {"1", "2"} else "l'altra squadra"
+
+    if favorite_key == "X":
+        paragraphs = [
+            (
+                "La partita suggerita dai dati ha il profilo di una gara paziente, in cui nessuna squadra può permettersi di concedere troppo. "
+                "Il primo vero vantaggio può nascere dalla capacità di ridurre gli errori prima ancora che dall'aumentare il ritmo."
+            )
+        ]
+    elif favorite_prob >= 0.60:
+        paragraphs = [
+            (
+                f"Il copione più probabile vede {favorite_label} provare a far pesare la propria superiorità nei segnali disponibili. "
+                f"{_why_favorite_is_ahead(matchup, favorite, home_team, away_team)}"
+            )
+        ]
+    elif favorite_prob >= 0.50:
+        paragraphs = [
+            (
+                f"La lettura più probabile vede {favorite_label} leggermente avanti, ma con un vantaggio che va costruito dentro la partita. "
+                f"{_why_favorite_is_ahead(matchup, favorite, home_team, away_team)}"
+            )
+        ]
+    else:
+        paragraphs = [
+            (
+                f"Qui il punto non è ribadire il vantaggio {_team_genitive(favorite)}, ma capire quanto sia sottile: i segnali sono vicini "
+                "e il copione può cambiare direzione con poco."
+            )
+        ]
+        if favorite_key in {"1", "2"}:
+            paragraphs[-1] = f"{paragraphs[-1]} {_why_favorite_is_ahead(matchup, favorite, home_team, away_team)}"
+
+    if favorite_key in {"1", "2"}:
+        paragraphs.append(
+            (
+                f"Per confermare la lettura, {favorite_label} deve evitare una gara troppo spezzata: serve continuità, gestione del vantaggio "
+                f"e abbastanza pulizia da non lasciare {underdog_label} dentro il match troppo a lungo."
+            )
+        )
+        paragraphs.append(
+            (
+                f"Dall'altra parte, {underdog_label} deve rendere la partita meno lineare: abbassare il ritmo, restare vicino nel punteggio "
+                "e trasformare ogni fase favorevole in un motivo di pressione."
+            )
+        )
+    else:
+        paragraphs.append("La squadra che riesce a stabilizzare prima la propria produzione può spostare un equilibrio altrimenti molto sottile.")
+
+    risk_note = ""
+    if draw_risk >= 60:
+        risk_note = "Se la gara si chiude, il pareggio diventa parte centrale del racconto."
+    elif draw_risk >= 45:
+        risk_note = "Se il ritmo resta basso, il pareggio diventa uno scenario da non ignorare."
+    elif upset_risk >= 60 and favorite_key in {"1", "2"}:
+        risk_note = f"Se {favorite_label} non trova continuità, la partita può diventare più scomoda del previsto."
+    elif upset_risk >= 45 and favorite_key in {"1", "2"}:
+        risk_note = f"La partita può aprirsi se {underdog_label} resta agganciata fino alla seconda parte."
+    if risk_note:
+        paragraphs[-1] = f"{paragraphs[-1]} {risk_note}"
+
+    return "\n".join(_dedupe(paragraphs, limit=3))
+
     if favorite_key == "X":
         lines = [
             "La partita suggerita dai dati assomiglia a una gara in cui nessuna squadra può permettersi di concedere troppo: il primo vantaggio vero può nascere dal ridurre gli errori prima ancora che dall'aumentare il volume.",
@@ -709,19 +886,10 @@ def build_probable_match_script(report: dict[str, Any]) -> str:
     else:
         lines.append(_balanced_edge_sentence(matchup, home_team, away_team))
     mismatch_takeaway = _combined_mismatch_takeaway(mismatches, home_team, away_team, favorite, underdog)
-    if mismatch_takeaway:
-        lines.append(mismatch_takeaway)
-    if prediction.get("ok"):
-        goals_gap = _safe_float(prediction.get("expected_goals_home")) - _safe_float(prediction.get("expected_goals_away"))
-        if abs(goals_gap) < 0.25:
-            lines.append("La produzione offensiva stimata è vicina: questo aumenta la possibilità di una gara paziente, in cui il primo strappo può pesare molto.")
-        elif goals_gap > 0:
-            lines.append(f"Il margine di {home_team} nasce soprattutto dalla capacità di trasformare il fattore campo in volume e continuità offensiva.")
-        else:
-            lines.append(f"Il margine di {away_team} passa dalla capacità di tenere alta la propria produzione anche fuori casa, senza lasciare la gara in balia dei dettagli.")
+    if mismatch_takeaway and favorite_prob >= 0.58:
+        lines[-1] = f"{lines[-1]} {mismatch_takeaway}"
     if favorite_key in {"1", "2"}:
-        lines.append(_team_goal_to_confirm(favorite, underdog, favorite_key))
-        lines.append(_underdog_route(underdog, favorite, favorite_key))
+        lines.append(f"{_team_goal_to_confirm(favorite, underdog, favorite_key)} {_underdog_route(underdog, favorite, favorite_key)}")
     risk_reason = _draw_risk_reason(draw_risk, confidence, favorite_prob, prediction)
     if risk_reason:
         lines.append(risk_reason)
@@ -729,9 +897,9 @@ def build_probable_match_script(report: dict[str, Any]) -> str:
     if upset_reason:
         lines.append(upset_reason)
     schedule_note = _schedule_takeaway(schedule, home_team, away_team)
-    if schedule_note:
+    if schedule_note and _schedule_is_material(schedule):
         lines.append(schedule_note)
-    return "\n".join(_dedupe(lines, limit=7))
+    return "\n".join(_dedupe(lines, limit=4))
 
 
 def build_alternative_match_script(report: dict[str, Any]) -> str:
@@ -749,29 +917,59 @@ def build_alternative_match_script(report: dict[str, Any]) -> str:
     mismatches = matchup.get("mismatches", []) if isinstance(matchup, dict) else []
     favorite_prob = contextual_probs.get(favorite_key or "", 0.0)
 
+    favorite_label = _team_subject(favorite) if favorite_key in {"1", "2"} else "una delle due squadre"
+    underdog_label = _team_subject(underdog) if favorite_key in {"1", "2"} else "l'altra squadra"
+
+    if favorite_key in {"1", "2"}:
+        if favorite_prob >= 0.60:
+            opening = (
+                f"Lo scenario alternativo non passa da un dominio {_team_genitive(underdog)}, ma da una partita più sporca e meno fluida: "
+                f"{favorite_label} fatica a trasformare la superiorità teorica in controllo e lascia il match aperto più a lungo."
+            )
+        else:
+            opening = (
+                f"L'alternativa nasce se {favorite_label} non riesce ad allungare il proprio piccolo vantaggio: "
+                f"{underdog_label} può restare in scia e portare la gara su dettagli difficili da prevedere."
+            )
+    else:
+        opening = (
+            "Lo scenario alternativo nasce da una squadra che rompe l'equilibrio prima che il pareggio diventi il centro emotivo della partita."
+        )
+
+    notes: list[str] = []
+    if draw_risk >= 60:
+        notes.append("Una partita chiusa farebbe crescere molto il peso del pareggio.")
+    elif draw_risk >= 45:
+        notes.append("Il pareggio resta una via credibile se nessuna delle due riesce a cambiare ritmo.")
+    if upset_risk >= 60 and favorite_key in {"1", "2"}:
+        notes.append(f"La favorita resta esposta se concede alla sfavorita troppe fasi di respiro.")
+    elif upset_risk >= 45 and favorite_key in {"1", "2"}:
+        notes.append(f"La lettura diventa meno stabile se {underdog_label} arriva viva alla parte finale.")
+    if confidence < 45:
+        notes.append("I segnali sono poco allineati, quindi il racconto pre-partita va letto con ancora più prudenza.")
+
+    return "\n".join([opening, " ".join(notes)] if notes else [opening])
+
     lines: list[str] = []
     if favorite_key in {"1", "2"}:
         lines.append(_alternative_opening(favorite, underdog, favorite_prob))
     else:
         lines.append("Lo scenario alternativo nasce da una squadra che rompe l'equilibrio con più continuità offensiva dell'altra, prima che il pareggio diventi il centro emotivo e statistico della gara.")
+    second_line = ""
     if draw_risk >= 60:
-        lines.append(_draw_risk_reason(draw_risk, confidence, favorite_prob, report.get("prediction", {}) or {}))
+        second_line = _draw_risk_reason(draw_risk, confidence, favorite_prob, report.get("prediction", {}) or {})
     elif draw_risk >= 45:
-        lines.append(_draw_risk_reason(draw_risk, confidence, favorite_prob, report.get("prediction", {}) or {}))
+        second_line = _draw_risk_reason(draw_risk, confidence, favorite_prob, report.get("prediction", {}) or {})
     elif favorite_key in {"1", "2"}:
-        lines.append(_alternative_low_volume_route(underdog, favorite))
+        second_line = _alternative_low_volume_route(underdog, favorite)
     if upset_risk >= 45 and favorite_key in {"1", "2"}:
-        lines.append(_upset_risk_reason(upset_risk, confidence, favorite, underdog, matchup))
+        upset_line = _upset_risk_reason(upset_risk, confidence, favorite, underdog, matchup)
+        second_line = f"{second_line} {upset_line}".strip()
     if confidence < 45:
-        lines.append("La lettura è fragile perché i segnali non sono allineati: basta poco per spostare il peso del report.")
-    elif confidence >= 70 and favorite_key in {"1", "2"}:
-        lines.append("Proprio perché il quadro è coerente, l'alternativa passa più da ciò che succede in campo che da una contraddizione forte nei dati pre-match.")
-    if len(mismatches) > 1 and favorite_key in {"1", "2"}:
-        lines.append(
-            f"Il punto da spegnere per {underdog} è il principale vantaggio di {favorite}: se riesce ad abbassarlo, il copione diventa meno lineare."
-        )
-    lines.append("Turnover, assenze e scelte iniziali restano il limite più serio della lettura: possono cambiare il peso del vantaggio tecnico prima ancora del fischio d'inizio.")
-    return "\n".join(_dedupe(lines, limit=5))
+        second_line = f"{second_line} La lettura resta fragile perché i segnali non sono perfettamente allineati.".strip()
+    if second_line:
+        lines.append(second_line)
+    return "\n".join(_dedupe(lines, limit=2))
 
 
 def build_team_identity_interaction(report: dict[str, Any]) -> str:
@@ -798,6 +996,54 @@ def build_team_identity_interaction(report: dict[str, Any]) -> str:
         if isinstance(row, dict) and row.get("leader") and row.get("edge") not in {None, "simile", "n/d"}
     ]
     lines: list[str] = []
+    if notable:
+        first = notable[0]
+        leader = first.get("leader")
+        leader_label = _team_subject(leader)
+        favorite_label = _team_subject(favorite) if favorite_key in {"1", "2"} else "la favorita"
+        first_label = _metric_on_phrase(first.get("label") or "un indicatore principale")
+        if favorite_key in {"1", "2"} and leader != favorite:
+            lines.append(
+                f"L'interazione tra le squadre introduce un contrappeso: {first_label} il confronto premia {leader_label}, "
+                f"quindi il vantaggio di {favorite_label} non copre ogni dimensione della partita."
+            )
+        else:
+            lines.append(
+                f"L'interazione tra le squadre sembra spostarsi soprattutto {first_label}: in questo punto il confronto premia {leader_label}."
+            )
+    else:
+        lines.append(
+            f"I profili di {_team_subject(home_team)} e {_team_subject(away_team)} sono vicini: il report non trova una frattura netta, quindi contano soprattutto chi concede meno situazioni pericolose e chi riesce a tenere più stabile la propria produzione."
+        )
+
+    if home_volatility != "non disponibile" or away_volatility != "non disponibile":
+        if home_volatility_reading == away_volatility_reading:
+            lines.append(f"La stabilità dei due profili è simile: entrambi entrano con una volatilità letta come {home_volatility_reading}.")
+        else:
+            lines.append(
+                f"La stabilità può incidere: {_team_subject(home_team)} mostra una volatilità {home_volatility_reading}, "
+                f"{_team_subject(away_team)} una volatilità {away_volatility_reading}."
+            )
+    if notable:
+        top_labels = [
+            _metric_short_phrase(row.get("label"))
+            for row in notable[:3]
+            if str(row.get("label") or "").strip()
+        ]
+        if len(top_labels) >= 2:
+            leader = notable[0].get("leader")
+            if favorite_key in {"1", "2"} and leader != favorite:
+                lines.append(
+                    f"Questi segnali danno {_a_team(leader)} un modo concreto per restare nella partita, soprattutto su {', '.join(top_labels[:2])}."
+                )
+            else:
+                lines.append(
+                    f"Il margine non sembra isolato: riguarda più dimensioni del rendimento e costruisce un vantaggio complessivo per {_team_subject(leader)}."
+                )
+        elif top_labels:
+            lines.append(f"Il punto più leggibile resta {top_labels[0]}, dove il dato aggregato è meno ambiguo.")
+    return "\n".join(_dedupe(lines, limit=3))
+
     if notable:
         first = notable[0]
         leader = first.get("leader")
@@ -842,16 +1088,7 @@ def build_team_identity_interaction(report: dict[str, Any]) -> str:
                 )
         elif top_labels:
             lines.append(f"Il punto più leggibile resta {top_labels[0]}, dove il dato aggregato è meno ambiguo.")
-    if notable and notable[0].get("leader") == away_team:
-        lines.append(
-            f"{home_team} deve probabilmente abbassare la qualità delle situazioni concesse: se lascia campo e continuità, {away_team} ha più margine per confermare la lettura."
-        )
-    elif notable and notable[0].get("leader") == home_team:
-        lines.append(f"{away_team} deve evitare che il vantaggio di {home_team} diventi ritmo stabile: la partita può complicarsi se il fattore campo produce volume continuo.")
-    lines.append(
-        "Questa è comunque una lettura di indicatori aggregati: non basta per parlare con certezza di moduli, pressing o costruzione dal basso."
-    )
-    return "\n".join(_dedupe(lines, limit=6))
+    return "\n".join(_dedupe(lines, limit=3))
 
 
 def build_reliability_assessment(report: dict[str, Any]) -> dict[str, list[str]]:
@@ -869,19 +1106,19 @@ def build_reliability_assessment(report: dict[str, Any]) -> dict[str, list[str]]
     reliable: list[str] = []
     fragile: list[str] = []
     if prediction.get("ok") and base_favorite == contextual_favorite:
-        reliable.append("La coerenza tra predictor base e lettura contestuale: entrambi indicano la stessa direzione.")
+        reliable.append("La lettura di base e quella contestuale indicano la stessa direzione.")
     if confidence >= 70:
-        reliable.append("La confidence alta segnala che i fattori principali sono abbastanza allineati.")
+        reliable.append("I segnali principali sono abbastanza allineati tra loro.")
     elif confidence < 45:
-        fragile.append("La confidence bassa renderebbe il report più instabile, perché i segnali sarebbero poco allineati.")
+        fragile.append("I segnali poco allineati rendono la lettura più instabile.")
     if ratings.get("home") and ratings.get("away"):
-        reliable.append("Il rating Elo è disponibile per entrambe le squadre e aggiunge un riferimento di forza storica/recente.")
+        reliable.append("Il profilo di forza è disponibile per entrambe le squadre e aiuta a dare contesto alla lettura.")
     if matchup.get("context_engine", {}).get("weighted_factors"):
         reliable.append("Il vantaggio del report non nasce da un solo dato: classifica, forma, casa/fuori e confronto tra profili vengono letti insieme.")
     if draw_risk >= 60:
-        fragile.append("Draw risk alto: il pareggio può disturbare la lettura del favorito.")
+        fragile.append("Una partita bloccata può disturbare la lettura del favorito.")
     if upset_risk >= 60:
-        fragile.append("Upset risk alto: il favorito non è protetto da segnali coerenti.")
+        fragile.append("Il favorito non è protetto da segnali abbastanza coerenti.")
     fragile.extend(
         [
             "Le assenze non note possono cambiare molto il peso della previsione.",
@@ -929,7 +1166,7 @@ def build_what_could_change_match(report: dict[str, Any]) -> list[str]:
     if draw_risk >= 45:
         items.append("Se il favorito non trova ritmo nella prima parte, il pareggio diventa più pesante.")
     if upset_risk >= 45:
-        items.append("Se la sfavorita tiene basso il numero di occasioni concesse, il vantaggio del modello perde forza.")
+        items.append("Se la sfavorita tiene basso il numero di occasioni concesse, il vantaggio iniziale perde forza.")
     mismatches = matchup.get("mismatches", []) if isinstance(matchup, dict) else []
     if mismatches and favorite_key in {"1", "2"}:
         items.append(
@@ -958,6 +1195,52 @@ def build_final_analyst_take(report: dict[str, Any]) -> str:
     draw_risk = _safe_float(contextual.get("draw_risk"), 50.0)
     upset_risk = _safe_float(contextual.get("upset_risk"), 50.0)
 
+    favorite_label = _team_subject(favorite) if favorite_key in {"1", "2"} else "il pareggio"
+    favorite_label_cap = _team_subject_cap(favorite) if favorite_key in {"1", "2"} else "Il pareggio"
+    underdog_label = _team_subject(underdog) if favorite_key in {"1", "2"} else "l'altra squadra"
+
+    if favorite_key == "X":
+        opening = (
+            "Lo scenario principale resta quello di una partita in equilibrio, in cui il primo strappo può pesare più della gerarchia iniziale."
+        )
+    elif favorite_probability >= 0.60:
+        opening = (
+            f"Lo scenario principale mette {favorite_label} davanti con una lettura piuttosto chiara: se riesce a dare continuità alla propria gara, "
+            "il vantaggio diventa più leggibile."
+        )
+    elif favorite_probability >= 0.50:
+        opening = (
+            f"Lo scenario principale mette {favorite_label} avanti, ma con un vantaggio da confermare: la partita non è chiusa e può cambiare se resta sporca."
+        )
+    else:
+        opening = (
+            f"Lo scenario principale dà qualcosa in più {_a_team(favorite)}, ma il confine con l'alternativa resta sottile."
+        )
+
+    if confidence >= 70:
+        confidence_text = "La lettura è abbastanza solida, ma resta incompleta."
+    elif confidence >= 45:
+        confidence_text = "La lettura è credibile ma non blindata."
+    else:
+        confidence_text = "La lettura è fragile e richiede molta prudenza."
+
+    if draw_risk >= 60:
+        alternative = "L'alternativa più forte è una gara chiusa, in cui il pareggio entra davvero nel cuore della trama."
+    elif draw_risk >= 45:
+        alternative = "L'alternativa passa da una gara che resta in equilibrio più a lungo del previsto."
+    elif upset_risk >= 45 and favorite_key in {"1", "2"}:
+        alternative = f"L'alternativa nasce se {underdog_label} resta dentro abbastanza da rendere meno pesante il vantaggio iniziale."
+    elif favorite_key in {"1", "2"}:
+        alternative = f"L'alternativa più credibile è una partita in cui {underdog_label} tiene basso il ritmo e costringe {favorite_label} a vincerla con pazienza."
+    else:
+        alternative = "L'alternativa è che una delle due riesca a rompere presto l'equilibrio e a cambiare il tono della gara."
+
+    limit = (
+        "Il limite principale resta informativo: formazioni, assenze, turnover e scelte tattiche possono cambiare molto il peso della previsione. "
+        "Senza quei dati, il report legge tendenze aggregate, non la partita viva."
+    )
+    return "\n".join([opening, f"{confidence_text} {alternative}", limit])
+
     if favorite_key == "X":
         opening = (
             "La conclusione è che il pareggio abbia un peso reale nella fotografia pre-partita: "
@@ -979,22 +1262,23 @@ def build_final_analyst_take(report: dict[str, Any]) -> str:
         )
     lines = [opening]
     if confidence >= 70:
-        lines.append(f"La fiducia del report è alta ({confidence:.1f}/100): il quadro è coerente e non dipende da un solo segnale.")
+        confidence_line = f"La fiducia del report è alta ({confidence:.1f}/100): il quadro è coerente, ma resta una lettura pre-partita."
     elif confidence < 45:
-        lines.append(f"La fiducia del report è bassa ({confidence:.1f}/100): i segnali sono poco allineati e la previsione è più fragile.")
+        confidence_line = f"La fiducia del report è bassa ({confidence:.1f}/100): i segnali sono poco allineati e la previsione è più fragile."
     else:
-        lines.append(f"La fiducia del report è media ({confidence:.1f}/100): c'è una direzione, ma il margine non è definitivo.")
+        confidence_line = f"La fiducia del report è media ({confidence:.1f}/100): c'è una direzione, ma non abbastanza solida da chiudere la partita sulla carta."
     if draw_risk >= 45:
-        lines.append("Lo scenario alternativo passa da una partita più chiusa, in cui il pareggio guadagna peso col passare dei minuti.")
-    if upset_risk >= 45:
-        lines.append("Il ribaltamento della lettura diventa credibile se il favorito non riesce a tradurre il margine in controllo del match.")
+        confidence_line = f"{confidence_line} Il pareggio guadagna peso se il match resta bloccato."
+    elif upset_risk >= 45:
+        confidence_line = f"{confidence_line} Lo scenario alternativo resta credibile se il favorito non riesce a far pesare il proprio vantaggio."
     if favorite_key in {"1", "2"} and draw_risk < 45 and upset_risk < 45:
-        lines.append(
-            f"Lo scenario alternativo più credibile non è un ribaltamento immediato, ma una gara in cui {underdog} tiene basso il volume e costringe {favorite} a forzare soluzioni meno pulite."
+        confidence_line = (
+            f"{confidence_line} L'alternativa più credibile non è un ribaltamento immediato, "
+            f"ma una gara in cui {underdog} tiene basso il ritmo e costringe {favorite} a forzare di più."
         )
-    lines.append("La cosa da monitorare vicino alla partita sono formazioni, assenze e possibili rotazioni: possono cambiare il peso della previsione.")
-    lines.append("Senza quei dati, questo report resta una lettura di tendenze aggregate: produzione, solidità, forma, Elo, calendario e interazione tra profili.")
-    return "\n".join(lines[:8])
+    lines.append(confidence_line)
+    lines.append("Il limite principale resta informativo: formazioni, assenze, turnover e scelte tattiche possono cambiare il peso della previsione vicino alla partita.")
+    return "\n".join(lines)
 
 
 def build_narrative_match_report(
@@ -1073,6 +1357,8 @@ def build_narrative_match_report(
             "technical": {
                 "base_probabilities": contextual.get("base_probabilities", {}),
                 "contextual_probabilities": contextual.get("contextual_probabilities", {}),
+                "expected_goals_home": prediction.get("expected_goals_home"),
+                "expected_goals_away": prediction.get("expected_goals_away"),
                 "adjusted_edge": contextual.get("adjusted_edge"),
                 "draw_risk": contextual.get("draw_risk"),
                 "upset_risk": contextual.get("upset_risk"),
